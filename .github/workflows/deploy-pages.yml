@@ -18,7 +18,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # важно: у тебя computeBase() завязан на GITHUB_PAGES === "true"
       GITHUB_PAGES: "true"
     steps:
       - uses: actions/checkout@v4
@@ -38,7 +37,6 @@ jobs:
         working-directory: ver01
         run: npm run build
 
-      # Диагностика: убедимся, что index.html реально есть
       - name: Check dist
         run: ls -la ver01/dist && test -f ver01/dist/index.html
 
