@@ -18,31 +18,29 @@ jobs:
   build:
     runs-on: ubuntu-latest
     env:
-      # ВАЖНО: у тебя computeBase() завязан на GITHUB_PAGES === "true"
       GITHUB_PAGES: "true"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4
         with:
           node-version: "20"
           cache: "npm"
+          cache-dependency-path: ver01/package-lock.json
 
       - name: Install
+        working-directory: ver01
         run: npm ci
 
       - name: Build
+        working-directory: ver01
         run: npm run build
 
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
+      - uses: actions/configure-pages@v5
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/upload-pages-artifact@v3
         with:
-          path: "./dist"
+          path: ./ver01/dist
 
   deploy:
     runs-on: ubuntu-latest
@@ -51,6 +49,5 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
-      - name: Deploy
-        id: deployment
+      - id: deployment
         uses: actions/deploy-pages@v4
