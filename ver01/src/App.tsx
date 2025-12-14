@@ -6,6 +6,7 @@ import AnalyticsPage from "./pages/AnalyticsPage";
 import TimePage from "./pages/TimePage";
 import ManagePage from "./pages/ManagePage";
 import TaskPage from "./pages/TaskPage";
+import BackupPage from "./pages/BackupPage";
 
 type Tab = {
   to: string;
@@ -30,11 +31,14 @@ function IconToday() {
 function IconWeek() {
   return (
     <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
-      <path d="M4 6h16" />
-      <path d="M4 10h16" />
-      <path d="M4 14h16" />
-      <path d="M4 18h16" />
       <path d="M5 4h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2z" />
+      <path d="M8 2v4" />
+      <path d="M16 2v4" />
+      <path d="M4 10h16" />
+      <path d="M7 14h4" />
+      <path d="M13 14h4" />
+      <path d="M7 18h4" />
+      <path d="M13 18h4" />
     </svg>
   );
 }
@@ -72,13 +76,23 @@ function IconManage() {
     </svg>
   );
 }
+function IconBackup() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth="2">
+      <path d="M12 3v10" />
+      <path d="M8 9l4 4 4-4" />
+      <path d="M4 17v3h16v-3" />
+    </svg>
+  );
+}
 
 const TABS: Tab[] = [
   { to: "/today", label: "Today", short: "Today", icon: <IconToday /> },
   { to: "/week", label: "Week", short: "Week", icon: <IconWeek /> },
   { to: "/analytics", label: "Analytics", short: "Stats", icon: <IconAnalytics /> },
   { to: "/time", label: "Time", short: "Time", icon: <IconTime /> },
-  { to: "/manage", label: "Manage", short: "Manage", icon: <IconManage /> }
+  { to: "/manage", label: "Manage", short: "Manage", icon: <IconManage /> },
+  { to: "/backup", label: "Backup", short: "Backup", icon: <IconBackup /> }
 ];
 
 function cx(...parts: Array<string | false | null | undefined>) {
@@ -87,7 +101,6 @@ function cx(...parts: Array<string | false | null | undefined>) {
 
 function usePageTitle() {
   const { pathname } = useLocation();
-
   if (pathname.startsWith("/task/")) return "Task";
   const found = TABS.find((t) => pathname === t.to || pathname.startsWith(t.to + "/"));
   return found?.label ?? "TM";
@@ -106,7 +119,7 @@ function Shell() {
             <div className="text-base font-semibold truncate">{title}</div>
           </div>
 
-          <div className="hidden md:flex items-center gap-2">
+          <div className="hidden md:flex items-center gap-2 flex-wrap justify-end">
             {TABS.map((t) => (
               <NavLink
                 key={t.to}
@@ -131,13 +144,13 @@ function Shell() {
       </header>
 
       {/* Content */}
-      <main className="mx-auto max-w-6xl px-3 py-4 pb-24 md:pb-6">
+      <main className="mx-auto max-w-6xl px-3 py-4 pb-28 md:pb-6">
         <Outlet />
       </main>
 
       {/* Bottom nav (mobile) */}
       <nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-slate-800 bg-slate-950/90 backdrop-blur md:hidden">
-        <div className="mx-auto max-w-6xl px-2 py-2 grid grid-cols-5 gap-1">
+        <div className="mx-auto max-w-6xl px-2 py-2 grid grid-cols-6 gap-1">
           {TABS.map((t) => (
             <NavLink
               key={t.to}
@@ -145,7 +158,9 @@ function Shell() {
               className={({ isActive }) =>
                 cx(
                   "rounded-xl px-2 py-2 text-center text-xs border",
-                  isActive ? "bg-slate-50 text-slate-950 border-slate-50 font-semibold" : "bg-slate-900 border-slate-800 text-slate-200"
+                  isActive
+                    ? "bg-slate-50 text-slate-950 border-slate-50 font-semibold"
+                    : "bg-slate-900 border-slate-800 text-slate-200"
                 )
               }
             >
@@ -167,10 +182,7 @@ function NotFound() {
       <div className="text-lg font-semibold">404</div>
       <div className="text-sm text-slate-400 mt-1">Страница не найдена.</div>
       <div className="mt-3">
-        <NavLink
-          to="/today"
-          className="inline-flex px-4 py-2 rounded-lg bg-slate-50 text-slate-950 text-sm font-semibold"
-        >
+        <NavLink to="/today" className="inline-flex px-4 py-2 rounded-lg bg-slate-50 text-slate-950 text-sm font-semibold">
           На Today
         </NavLink>
       </div>
@@ -189,6 +201,7 @@ export default function App() {
         <Route path="/analytics" element={<AnalyticsPage />} />
         <Route path="/time" element={<TimePage />} />
         <Route path="/manage" element={<ManagePage />} />
+        <Route path="/backup" element={<BackupPage />} />
 
         <Route path="/task/:id" element={<TaskPage />} />
 
