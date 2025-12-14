@@ -1,44 +1,23 @@
 import { useEffect, useMemo, useState } from "react";
-import { format } from "date-fns";
-import { db, ensureDefaultSettings, logEvent, type Settings } from "../data/db";
-
-type BackupMode = "replace" | "merge";
-
-type BackupMeta = {
-  schemaVersion: number;
-  exportedAt: number;
-  appName: string;
-  appVersion: string;
-};
-
-type BackupTables = {
-  tasks: unknown[];
-  scheduleBlocks: unknown[];
-  timeLogs: unknown[];
-  eventLogs: unknown[];
-  tags: unknown[];
-  contexts: unknown[];
-  sinks: unknown[];
-  goals: unknown[];
-  projects: unknown[];
-  settings: unknown[]; // массив, но внутри ожидаем singleton
-};
+import { db, ensureDefaultSettings, logEvent } from "../data/db";
 
 type BackupPayload = {
-  meta: BackupMeta;
-  tables: BackupTables;
+  app: string;
+  version: number;
+  createdAt: number;
+
+  // tables
+  tasks?: any[];
+  timeLogs?: any[];
+  scheduleBlocks?: any[];
+  tags?: any[];
+  sinks?: any[];
+  settings?: any[];
+  events?: any[];
 };
 
-function niceTs(ts?: number) {
-  if (!ts) return "—";
-  return format(new Date(ts), "dd.MM.yyyy HH:mm");
-}
-
-function fileStamp(ts: number) {
-  return format(new Date(ts), "yyyyMMdd_HHmm");
-}
-
-function downloadBlob(blob: Blob, filename: string) {
+function downloadText(filename: string, content: string, mime = "application/json") {
+  const blob = new Blob([content], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -49,277 +28,283 @@ function downloadBlob(blob: Blob, filename: string) {
   URL.revokeObjectURL(url);
 }
 
-function isObject(v: unknown): v is Record<string, unknown> {
-  return typeof v === "object" && v !== null;
-}
+function toCSV(rows: Record<string, any>[]) {
+  if (!rows.length) return "";
+  const headers = Array.from(
+    rows.reduce((set, r) => {
+      Object.keys(r).forEach((k) => set.add(k));
+      return set;
+    }, new Set<string>())
+  );
 
-function basicValidateBackup(x: unknown): x is BackupPayload {
-  if (!isObject(x)) return false;
-  const meta = (x as any).meta;
-  const tables = (x as any).tables;
-  if (!isObject(meta) || !isObject(tables)) return false;
-
-  const okMeta =
-    typeof meta.schemaVersion === "number" &&
-    typeof meta.exportedAt === "number" &&
-    typeof meta.appName === "string" &&
-    typeof meta.appVersion === "string";
-
-  if (!okMeta) return false;
-
-  const keys: (keyof BackupTables)[] = [
-    "tasks",
-    "scheduleBlocks",
-    "timeLogs",
-    "eventLogs",
-    "tags",
-    "contexts",
-    "sinks",
-    "goals",
-    "projects",
-    "settings"
-  ];
-
-  for (const k of keys) {
-    if (!Array.isArray((tables as any)[k])) return false;
-  }
-  return true;
-}
-
-async function buildBackupPayload(): Promise<BackupPayload> {
-  const schemaVersion = 1;
-  const exportedAt = Date.now();
-
-  const [
-    tasks,
-    scheduleBlocks,
-    timeLogs,
-    eventLogs,
-    tags,
-    contexts,
-    sinks,
-    goals,
-    projects,
-    settings
-  ] = await Promise.all([
-    db.tasks.toArray(),
-    db.scheduleBlocks.toArray(),
-    db.timeLogs.toArray(),
-    db.eventLogs.toArray(),
-    db.tags.toArray(),
-    db.contexts.toArray(),
-    db.sinks.toArray(),
-    db.goals.toArray(),
-    db.projects.toArray(),
-    db.settings.toArray()
-  ]);
-
-  return {
-    meta: {
-      schemaVersion,
-      exportedAt,
-      appName: "TM Archangel PWA",
-      appVersion: "0.0.1"
-    },
-    tables: {
-      tasks,
-      scheduleBlocks,
-      timeLogs,
-      eventLogs,
-      tags,
-      contexts,
-      sinks,
-      goals,
-      projects,
-      settings
-    }
+  const esc = (v: any) => {
+    const s = v === null || v === undefined ? "" : String(v);
+    if (/[",\n]/.test(s)) return `"${s.replaceAll('"', '""')}"`;
+    return s;
   };
+
+  const lines = [headers.join(",")];
+  for (const r of rows) lines.push(headers.map((h) => esc(r[h])).join(","));
+  return lines.join("\n");
+}
+
+function safeParseJSON(text: string): { ok: true; value: any } | { ok: false; error: string } {
+  try {
+    const v = JSON.parse(text);
+    return { ok: true, value: v };
+  } catch (e: any) {
+    return { ok: false, error: e?.message ?? "JSON parse error" };
+  }
+}
+
+function validateBackup(v: any): { ok: true; value: BackupPayload } | { ok: false; error: string } {
+  if (!v || typeof v !== "object") return { ok: false, error: "Файл не похож на backup (не объект)." };
+  if (v.app !== "tm-local-first") return { ok: false, error: "Это не backup от этого приложения (app mismatch)." };
+  if (typeof v.version !== "number") return { ok: false, error: "Некорректный version." };
+  if (typeof v.createdAt !== "number") return { ok: false, error: "Некорректный createdAt." };
+
+  // tables are optional, but if present must be arrays
+  const arrKeys = ["tasks", "timeLogs", "scheduleBlocks", "tags", "sinks", "settings", "events"];
+  for (const k of arrKeys) {
+    if (k in v && !Array.isArray(v[k])) return { ok: false, error: `Поле ${k} должно быть массивом.` };
+  }
+
+  return { ok: true, value: v as BackupPayload };
+}
+
+function cx(...parts: Array<string | false | null | undefined>) {
+  return parts.filter(Boolean).join(" ");
 }
 
 export default function BackupPage() {
-  const [settings, setSettings] = useState<Settings | null>(null);
+  const [stats, setStats] = useState<Record<string, number>>({});
   const [busy, setBusy] = useState(false);
-  const [importMode, setImportMode] = useState<BackupMode>("replace");
-  const [importInfo, setImportInfo] = useState<string>("");
 
-  const lastBackupAt = settings?.lastBackupAt;
+  const [fileInfo, setFileInfo] = useState<string>("");
+  const [pending, setPending] = useState<BackupPayload | null>(null);
+  const [restoreMode, setRestoreMode] = useState<"merge" | "overwrite">("overwrite");
+  const [restoreLog, setRestoreLog] = useState<string>("");
 
-  const backupHealth = useMemo(() => {
-    if (!settings) return { ok: true, msg: "—" };
-    const remindDays = settings.backupRemindDays ?? 7;
-    if (!settings.lastBackupAt) {
-      return { ok: false, msg: "Бэкап ещё ни разу не делался. Очень рекомендую сделать JSON + Excel." };
-    }
-    const days = Math.floor((Date.now() - settings.lastBackupAt) / (1000 * 60 * 60 * 24));
-    if (days >= remindDays) {
-      return { ok: false, msg: `Последний бэкап был ${days} дн. назад — пора обновить.` };
-    }
-    return { ok: true, msg: `Последний бэкап ${days} дн. назад — нормально.` };
-  }, [settings]);
-
-  async function reloadSettings() {
+  async function reloadStats() {
     await ensureDefaultSettings();
-    const s = await db.settings.get("singleton");
-    if (s) setSettings(s);
+
+    // Some tables might not exist in your db.ts (events for example) — check safely.
+    const counts: Record<string, number> = {};
+
+    counts.tasks = (await db.tasks.count()) as any;
+    counts.timeLogs = (await db.timeLogs.count()) as any;
+    counts.scheduleBlocks = (await db.scheduleBlocks.count()) as any;
+    counts.tags = (await db.tags.count()) as any;
+    counts.sinks = (await db.sinks.count()) as any;
+
+    // settings is usually one row, but count anyway
+    if ((db as any).settings?.count) counts.settings = await (db as any).settings.count();
+
+    if ((db as any).events?.count) counts.events = await (db as any).events.count();
+
+    setStats(counts);
   }
 
   useEffect(() => {
-    void reloadSettings();
-
-    const handler = () => void reloadSettings();
+    void reloadStats();
+    const handler = () => void reloadStats();
     db.on("changes", handler);
     return () => {
       db.on("changes").unsubscribe(handler);
     };
   }, []);
 
-  async function markBackupExported(exportedAt: number) {
-    await db.settings.update("singleton", { lastBackupAt: exportedAt });
-    await logEvent({ type: "backup_exported", payload: { exportedAt } });
-  }
+  const pendingSummary = useMemo(() => {
+    if (!pending) return null;
+    const c = (arr?: any[]) => (Array.isArray(arr) ? arr.length : 0);
+    return {
+      createdAt: new Date(pending.createdAt).toLocaleString(),
+      tasks: c(pending.tasks),
+      timeLogs: c(pending.timeLogs),
+      scheduleBlocks: c(pending.scheduleBlocks),
+      tags: c(pending.tags),
+      sinks: c(pending.sinks),
+      settings: c(pending.settings),
+      events: c(pending.events)
+    };
+  }, [pending]);
 
-  async function exportJson() {
+  async function makeBackup() {
     setBusy(true);
-    setImportInfo("");
+    setRestoreLog("");
     try {
-      const payload = await buildBackupPayload();
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json" });
-      downloadBlob(blob, `tm_backup_${fileStamp(payload.meta.exportedAt)}.json`);
-      await markBackupExported(payload.meta.exportedAt);
-    } finally {
-      setBusy(false);
-    }
-  }
+      await ensureDefaultSettings();
 
-  async function exportXlsx() {
-    setBusy(true);
-    setImportInfo("");
-    try {
-      const payload = await buildBackupPayload();
+      const payload: BackupPayload = {
+        app: "tm-local-first",
+        version: 1,
+        createdAt: Date.now(),
 
-      // Динамический импорт, чтобы не грузить xlsx в initial bundle лишний раз
-      const XLSX = await import("xlsx");
-
-      const wb = XLSX.utils.book_new();
-
-      const addSheet = (name: string, rows: any[]) => {
-        // Делать лист даже пустым — чтобы структура была стабильной
-        const ws = XLSX.utils.json_to_sheet(rows ?? []);
-        XLSX.utils.book_append_sheet(wb, ws, name);
+        tasks: await db.tasks.toArray(),
+        timeLogs: await db.timeLogs.toArray(),
+        scheduleBlocks: await db.scheduleBlocks.toArray(),
+        tags: await db.tags.toArray(),
+        sinks: await db.sinks.toArray()
       };
 
-      addSheet("Tasks", payload.tables.tasks as any[]);
-      addSheet("ScheduleBlocks", payload.tables.scheduleBlocks as any[]);
-      addSheet("TimeLogs", payload.tables.timeLogs as any[]);
-      addSheet("EventLogs", payload.tables.eventLogs as any[]);
-      addSheet("Tags", payload.tables.tags as any[]);
-      addSheet("Contexts", payload.tables.contexts as any[]);
-      addSheet("Sinks", payload.tables.sinks as any[]);
-      addSheet("Goals", payload.tables.goals as any[]);
-      addSheet("Projects", payload.tables.projects as any[]);
-      addSheet("Settings", payload.tables.settings as any[]);
+      if ((db as any).settings?.toArray) payload.settings = await (db as any).settings.toArray();
+      if ((db as any).events?.toArray) payload.events = await (db as any).events.toArray();
 
-      // метаданные — отдельным листом
-      addSheet("Meta", [payload.meta]);
+      const name = `tm-backup_${new Date(payload.createdAt).toISOString().slice(0, 19).replaceAll(":", "-")}.json`;
+      downloadText(name, JSON.stringify(payload, null, 2), "application/json");
 
-      const out = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-      const blob = new Blob([out], {
-        type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-      });
-
-      downloadBlob(blob, `tm_export_${fileStamp(payload.meta.exportedAt)}.xlsx`);
-      await markBackupExported(payload.meta.exportedAt);
+      await logEvent({ type: "backup_exported", payload: { name, createdAt: payload.createdAt } });
     } finally {
       setBusy(false);
     }
   }
 
-  async function importJsonFile(file: File) {
+  async function exportTimeLogsCSV() {
     setBusy(true);
-    setImportInfo("");
+    setRestoreLog("");
     try {
-      const text = await file.text();
-      let parsed: unknown;
-      try {
-        parsed = JSON.parse(text);
-      } catch {
-        setImportInfo("Ошибка: файл не является корректным JSON.");
-        return;
-      }
+      const rows = await db.timeLogs.toArray();
+      // flatten basic fields to keep Excel-friendly
+      const flat = rows.map((l: any) => ({
+        id: l.id,
+        date: l.date,
+        taskId: l.taskId ?? "",
+        sinkId: l.sinkId ?? "",
+        abc: l.abc ?? "",
+        durationMin: l.durationMin ?? "",
+        startTs: l.startTs ?? "",
+        endTs: l.endTs ?? "",
+        note: l.note ?? "",
+        createdAt: l.createdAt ?? ""
+      }));
+      downloadText(`timeLogs.csv`, toCSV(flat), "text/csv");
+      await logEvent({ type: "export_csv", payload: { table: "timeLogs" } });
+    } finally {
+      setBusy(false);
+    }
+  }
 
-      if (!basicValidateBackup(parsed)) {
-        setImportInfo("Ошибка: структура бэкапа не распознана (не похоже на наш формат).");
-        return;
-      }
+  async function exportTasksCSV() {
+    setBusy(true);
+    setRestoreLog("");
+    try {
+      const rows = await db.tasks.toArray();
+      const flat = rows.map((t: any) => ({
+        id: t.id,
+        title: t.title,
+        status: t.status ?? "",
+        plannedDate: t.plannedDate ?? "",
+        dueDate: t.dueDate ?? "",
+        abc: t.abc ?? "",
+        estimateMin: t.estimateMin ?? "",
+        tagIds: Array.isArray(t.tagIds) ? t.tagIds.join("|") : "",
+        description: t.description ?? "",
+        createdAt: t.createdAt ?? "",
+        updatedAt: t.updatedAt ?? "",
+        doneAt: t.doneAt ?? ""
+      }));
+      downloadText(`tasks.csv`, toCSV(flat), "text/csv");
+      await logEvent({ type: "export_csv", payload: { table: "tasks" } });
+    } finally {
+      setBusy(false);
+    }
+  }
 
-      const payload = parsed;
+  async function onPickFile(file: File | null) {
+    setPending(null);
+    setFileInfo("");
+    setRestoreLog("");
 
-      // Предупреждение
-      if (importMode === "replace") {
-        const ok = confirm(
-          "Импорт в режиме REPLACE удалит текущие данные в приложении и заменит их содержимым бэкапа.\n\n" +
-            "Рекомендация: сначала сделай Export JSON текущего состояния.\n\n" +
-            "Продолжить?"
-        );
-        if (!ok) return;
-      }
+    if (!file) return;
+    if (!file.name.toLowerCase().endsWith(".json")) {
+      setFileInfo("Файл должен быть .json");
+      return;
+    }
 
-      // Транзакция на все таблицы
-      await db.transaction(
-        "rw",
-        db.tasks,
-        db.scheduleBlocks,
-        db.timeLogs,
-        db.eventLogs,
-        db.tags,
-        db.contexts,
-        db.sinks,
-        db.goals,
-        db.projects,
-        db.settings,
-        async () => {
-          if (importMode === "replace") {
-            await Promise.all([
-              db.tasks.clear(),
-              db.scheduleBlocks.clear(),
-              db.timeLogs.clear(),
-              db.eventLogs.clear(),
-              db.tags.clear(),
-              db.contexts.clear(),
-              db.sinks.clear(),
-              db.goals.clear(),
-              db.projects.clear(),
-              db.settings.clear()
-            ]);
-          }
+    const text = await file.text();
+    const parsed = safeParseJSON(text);
+    if (!parsed.ok) {
+      setFileInfo(`Ошибка JSON: ${parsed.error}`);
+      return;
+    }
 
-          // bulkPut = merge по ключу id (обновляет/добавляет)
-          await db.tasks.bulkPut(payload.tables.tasks as any[]);
-          await db.scheduleBlocks.bulkPut(payload.tables.scheduleBlocks as any[]);
-          await db.timeLogs.bulkPut(payload.tables.timeLogs as any[]);
-          await db.eventLogs.bulkPut(payload.tables.eventLogs as any[]);
-          await db.tags.bulkPut(payload.tables.tags as any[]);
-          await db.contexts.bulkPut(payload.tables.contexts as any[]);
-          await db.sinks.bulkPut(payload.tables.sinks as any[]);
-          await db.goals.bulkPut(payload.tables.goals as any[]);
-          await db.projects.bulkPut(payload.tables.projects as any[]);
-          await db.settings.bulkPut(payload.tables.settings as any[]);
+    const valid = validateBackup(parsed.value);
+    if (!valid.ok) {
+      setFileInfo(`Неверный backup: ${valid.error}`);
+      return;
+    }
 
-          // Если после импорта settings по какой-то причине нет — создадим дефолтные
-          const s = await db.settings.get("singleton");
-          if (!s) {
-            await ensureDefaultSettings();
+    setPending(valid.value);
+    setFileInfo(`Готов к восстановлению: ${file.name}`);
+  }
+
+  async function restore() {
+    if (!pending) return;
+
+    const ok = confirm(
+      restoreMode === "overwrite"
+        ? "Восстановить в режиме OVERWRITE?\n\nЭто очистит текущие данные в приложении и заменит их данными из файла."
+        : "Восстановить в режиме MERGE?\n\nЭто добавит/обновит записи (upsert), не удаляя текущие."
+    );
+    if (!ok) return;
+
+    setBusy(true);
+    setRestoreLog("");
+    try {
+      const b = pending;
+
+      const hasEvents = Boolean((db as any).events);
+      const hasSettings = Boolean((db as any).settings);
+
+      // Dexie transaction: include only existing tables
+      const tables: any[] = [db.tasks, db.timeLogs, db.scheduleBlocks, db.tags, db.sinks];
+      if (hasSettings) tables.push((db as any).settings);
+      if (hasEvents) tables.push((db as any).events);
+
+      await (db as any).transaction("rw", ...tables, async () => {
+        if (restoreMode === "overwrite") {
+          // clear first
+          await db.tasks.clear();
+          await db.timeLogs.clear();
+          await db.scheduleBlocks.clear();
+          await db.tags.clear();
+          await db.sinks.clear();
+          if (hasSettings) await (db as any).settings.clear();
+          if (hasEvents) await (db as any).events.clear();
+        }
+
+        // upsert
+        if (Array.isArray(b.tags) && b.tags.length) await db.tags.bulkPut(b.tags as any);
+        if (Array.isArray(b.sinks) && b.sinks.length) await db.sinks.bulkPut(b.sinks as any);
+        if (Array.isArray(b.tasks) && b.tasks.length) await db.tasks.bulkPut(b.tasks as any);
+        if (Array.isArray(b.timeLogs) && b.timeLogs.length) await db.timeLogs.bulkPut(b.timeLogs as any);
+        if (Array.isArray(b.scheduleBlocks) && b.scheduleBlocks.length) await db.scheduleBlocks.bulkPut(b.scheduleBlocks as any);
+
+        if (hasSettings && Array.isArray(b.settings) && b.settings.length) await (db as any).settings.bulkPut(b.settings);
+        if (hasEvents && Array.isArray(b.events) && b.events.length) await (db as any).events.bulkPut(b.events);
+      });
+
+      await logEvent({
+        type: "backup_restored",
+        payload: {
+          mode: restoreMode,
+          createdAt: b.createdAt,
+          counts: {
+            tasks: b.tasks?.length ?? 0,
+            timeLogs: b.timeLogs?.length ?? 0,
+            scheduleBlocks: b.scheduleBlocks?.length ?? 0,
+            tags: b.tags?.length ?? 0,
+            sinks: b.sinks?.length ?? 0
           }
         }
-      );
+      });
 
-      setImportInfo(
-        `Импорт завершён (${importMode.toUpperCase()}). Файл: ${file.name}. Экспортирован: ${niceTs(
-          (payload as any).meta.exportedAt
-        )}`
-      );
+      setRestoreLog("Восстановление выполнено. Проверь Today/Week/Time/Analytics.");
+      setPending(null);
+      setFileInfo("");
+      await reloadStats();
     } catch (e: any) {
-      setImportInfo(`Ошибка импорта: ${e?.message ?? String(e)}`);
+      setRestoreLog(`Ошибка восстановления: ${e?.message ?? String(e)}`);
     } finally {
       setBusy(false);
     }
@@ -331,98 +316,151 @@ export default function BackupPage() {
         <div>
           <h1 className="text-xl font-semibold">Backup</h1>
           <div className="text-slate-300 text-sm">
-            Без облака твоя надёжность = локальная БД + регулярные бэкапы (JSON) + выгрузка для анализа (Excel).
+            Данные хранятся локально (IndexedDB). Если чистить данные браузера/переустанавливать — можно потерять.
+            Поэтому: делай backup раз в неделю/перед важными изменениями.
           </div>
         </div>
       </div>
 
-      {/* Health */}
-      <div className="p-3 rounded-xl border border-slate-800 bg-slate-950">
-        <div className="flex items-center justify-between gap-2 flex-wrap">
-          <div className="text-sm">
-            Последний бэкап: <span className="font-semibold">{niceTs(lastBackupAt)}</span>
-          </div>
-          {settings && (
-            <div className="text-xs text-slate-400">
-              Напоминать каждые {settings.backupRemindDays} дн.
+      {/* Current stats */}
+      <section className="rounded-xl border border-slate-800 bg-slate-950 p-3 space-y-2">
+        <div className="flex items-center justify-between">
+          <div className="font-semibold">Сейчас в базе</div>
+          <button
+            onClick={() => void reloadStats()}
+            className="px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs"
+          >
+            Refresh
+          </button>
+        </div>
+
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+          {Object.entries(stats).map(([k, v]) => (
+            <div key={k} className="rounded-lg border border-slate-800 bg-slate-900/30 p-3">
+              <div className="text-xs text-slate-400">{k}</div>
+              <div className="text-lg font-semibold">{v}</div>
             </div>
-          )}
+          ))}
         </div>
-
-        <div className={`mt-2 text-sm ${backupHealth.ok ? "text-slate-300" : "text-amber-300"}`}>
-          {backupHealth.msg}
-        </div>
-      </div>
+      </section>
 
       {/* Export */}
-      <div className="p-3 rounded-xl border border-slate-800 bg-slate-950">
-        <h2 className="font-semibold">Экспорт</h2>
-        <div className="mt-2 flex flex-col sm:flex-row gap-2">
+      <section className="rounded-xl border border-slate-800 bg-slate-950 p-3 space-y-3">
+        <div className="font-semibold">Экспорт</div>
+
+        <div className="flex flex-col md:flex-row gap-2">
           <button
             disabled={busy}
-            onClick={() => void exportJson()}
-            className="px-4 py-2 rounded-lg bg-slate-50 text-slate-950 text-sm font-semibold hover:bg-white disabled:opacity-50"
+            onClick={() => void makeBackup()}
+            className={cx(
+              "px-4 py-2 rounded-lg text-sm font-semibold",
+              busy ? "bg-slate-800 text-slate-400" : "bg-slate-50 text-slate-950 hover:bg-white"
+            )}
           >
-            Export JSON (бэкап)
+            Download backup JSON
           </button>
+
           <button
             disabled={busy}
-            onClick={() => void exportXlsx()}
-            className="px-4 py-2 rounded-lg bg-slate-800 text-slate-100 text-sm font-semibold hover:bg-slate-700 disabled:opacity-50"
+            onClick={() => void exportTasksCSV()}
+            className={cx(
+              "px-4 py-2 rounded-lg text-sm font-semibold",
+              busy ? "bg-slate-800 text-slate-400" : "bg-slate-900 border border-slate-800 text-slate-100"
+            )}
           >
-            Export Excel (.xlsx)
+            Tasks CSV (Excel)
+          </button>
+
+          <button
+            disabled={busy}
+            onClick={() => void exportTimeLogsCSV()}
+            className={cx(
+              "px-4 py-2 rounded-lg text-sm font-semibold",
+              busy ? "bg-slate-800 text-slate-400" : "bg-slate-900 border border-slate-800 text-slate-100"
+            )}
+          >
+            TimeLogs CSV (Excel)
           </button>
         </div>
 
-        <div className="mt-2 text-xs text-slate-400">
-          JSON нужен для восстановления “как было”. Excel — для анализа в таблицах (сводные, Power Query, BI).
+        <div className="text-xs text-slate-500">
+          JSON = полный слепок для восстановления. CSV = для анализа в Excel/PowerBI.
         </div>
-      </div>
+      </section>
 
-      {/* Import */}
-      <div className="p-3 rounded-xl border border-slate-800 bg-slate-950">
-        <h2 className="font-semibold">Импорт</h2>
+      {/* Restore */}
+      <section className="rounded-xl border border-slate-800 bg-slate-950 p-3 space-y-3">
+        <div className="font-semibold">Восстановление</div>
 
-        <div className="mt-2 flex flex-col sm:flex-row gap-2 sm:items-center">
-          <label className="text-sm text-slate-300">Режим:</label>
-          <select
-            value={importMode}
-            onChange={(e) => setImportMode(e.target.value as BackupMode)}
-            className="bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm"
-            disabled={busy}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 items-end">
+          <label className="space-y-1">
+            <div className="text-sm text-slate-300">Файл backup (.json)</div>
+            <input
+              type="file"
+              accept="application/json,.json"
+              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm"
+              onChange={(e) => void onPickFile(e.target.files?.[0] ?? null)}
+              disabled={busy}
+            />
+          </label>
+
+          <label className="space-y-1">
+            <div className="text-sm text-slate-300">Режим</div>
+            <select
+              value={restoreMode}
+              onChange={(e) => setRestoreMode(e.target.value as any)}
+              className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm"
+              disabled={busy}
+            >
+              <option value="overwrite">OVERWRITE (заменить всё)</option>
+              <option value="merge">MERGE (объединить/upsert)</option>
+            </select>
+          </label>
+
+          <button
+            disabled={busy || !pending}
+            onClick={() => void restore()}
+            className={cx(
+              "px-4 py-2 rounded-lg text-sm font-semibold",
+              busy || !pending ? "bg-slate-800 text-slate-400" : "bg-emerald-200 text-emerald-950"
+            )}
           >
-            <option value="replace">REPLACE (полное восстановление)</option>
-            <option value="merge">MERGE (объединить с текущими)</option>
-          </select>
-
-          <input
-            type="file"
-            accept="application/json,.json"
-            disabled={busy}
-            onChange={(e) => {
-              const f = e.target.files?.[0];
-              if (!f) return;
-              void importJsonFile(f);
-              // allow re-select same file
-              e.currentTarget.value = "";
-            }}
-            className="text-sm"
-          />
+            Restore
+          </button>
         </div>
 
-        <div className="mt-2 text-xs text-slate-400">
-          REPLACE — если переносишься на новый телефон/после сброса. MERGE — если хочешь “слить” две базы.
-        </div>
+        <div className="text-sm text-slate-300">{fileInfo || "Выбери файл, чтобы увидеть предпросмотр."}</div>
 
-        {importInfo && (
-          <div className="mt-3 p-3 rounded-lg border border-slate-800 bg-slate-900/40 text-sm text-slate-200">
-            {importInfo}
+        {pendingSummary && (
+          <div className="rounded-xl border border-slate-800 bg-slate-900/30 p-3">
+            <div className="text-sm font-semibold">Предпросмотр</div>
+            <div className="text-xs text-slate-400 mt-1">backup создан: {pendingSummary.createdAt}</div>
+
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 mt-3 text-sm">
+              {Object.entries(pendingSummary)
+                .filter(([k]) => k !== "createdAt")
+                .map(([k, v]) => (
+                  <div key={k} className="rounded-lg border border-slate-800 bg-slate-950 p-3">
+                    <div className="text-xs text-slate-400">{k}</div>
+                    <div className="text-lg font-semibold">{v as any}</div>
+                  </div>
+                ))}
+            </div>
+
+            <div className="text-xs text-slate-500 mt-2">
+              OVERWRITE полезен, если хочешь “точно как в backup”. MERGE полезен, если хочешь объединить несколько устройств.
+            </div>
           </div>
         )}
-      </div>
+
+        {restoreLog ? (
+          <div className="rounded-lg border border-slate-800 bg-slate-900/30 p-3 text-sm">{restoreLog}</div>
+        ) : null}
+      </section>
 
       <div className="text-xs text-slate-500">
-        Следующий шаг: страница Settings (рабочие часы/шаг сетки/60-40/напоминания) и далее — Review/Analytics.
+        Чтобы эта страница появилась в меню, нужно добавить роут <span className="text-slate-300">/backup</span> в App.tsx.
+        Следующим файлом дам правку App.tsx (и кнопку в навигации).
       </div>
     </div>
   );
