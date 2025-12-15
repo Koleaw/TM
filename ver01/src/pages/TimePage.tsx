@@ -6,6 +6,9 @@ import {
   stopTimer,
   updateTimeLog,
   useAppState,
+  addListItem,
+  renameListItem,
+  removeListItem,
 } from "../data/db";
 
 function pad2(n: number) {
@@ -57,6 +60,23 @@ export default function TimePage() {
     return map;
   }, [timeTypes]);
 
+  // ---- справочник типов времени (CRUD) ----
+  const [newTimeTypeName, setNewTimeTypeName] = useState<string>("");
+
+  function addTimeType() {
+    const name = newTimeTypeName.trim();
+    if (!name) return;
+
+    const exists = timeTypes.some((x) => x.name.trim().toLowerCase() === name.toLowerCase());
+    if (exists) {
+      setNewTimeTypeName("");
+      return;
+    }
+
+    addListItem("timeTypes", name);
+    setNewTimeTypeName("");
+  }
+
   // ---- таймер ----
   const active = s.activeTimer;
   const [timerTaskId, setTimerTaskId] = useState<string>("");
@@ -82,9 +102,13 @@ export default function TimePage() {
 
   const manualStartMs = useMemo(() => parseLocalDateTimeInput(manualStart), [manualStart]);
   const manualEndMs = useMemo(() => parseLocalDateTimeInput(manualEnd), [manualEnd]);
+
   const manualValid =
     Number.isFinite(manualStartMs) && Number.isFinite(manualEndMs) && manualEndMs > manualStartMs;
-  const manualMinutes = manualValid ? Math.max(1, Math.ceil((manualEndMs - manualStartMs) / 60000)) : 0;
+
+  const manualMinutes = manualValid
+    ? Math.max(1, Math.ceil((manualEndMs - manualStartMs) / 60000))
+    : 0;
 
   // ---- редактирование записи ----
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -118,6 +142,7 @@ export default function TimePage() {
       endedAt,
       note: editNote ?? "",
     });
+
     setEditingId(null);
   }
 
@@ -139,6 +164,67 @@ export default function TimePage() {
 
   return (
     <div className="grid gap-3">
+      {/* Справочник типов времени */}
+      <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
+        <div className="text-lg font-semibold">Типы времени</div>
+        <div className="mt-1 text-sm text-slate-400">
+          Здесь можно добавлять свои (например: “Работа”, “Саморазвитие”, “Спорт”).
+          Удаление не трогает старые логи — у них просто будет “тип удалён” в аналитике.
+        </div>
+
+        <div className="mt-3 flex flex-wrap gap-2">
+          <input
+            className="min-w-[260px] flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+            value={newTimeTypeName}
+            onChange={(e) => setNewTimeTypeName(e.target.value)}
+            placeholder='Новый тип, например "Работа"'
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addTimeType();
+            }}
+          />
+          <button
+            className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-40"
+            disabled={!newTimeTypeName.trim()}
+            onClick={addTimeType}
+          >
+            Добавить
+          </button>
+        </div>
+
+        <div className="mt-3 grid gap-2">
+          {timeTypes.length === 0 ? (
+            <div className="text-sm text-slate-400">Пока пусто</div>
+          ) : (
+            timeTypes.map((it) => (
+              <div
+                key={it.id}
+                className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2"
+              >
+                <input
+                  className="flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-200"
+                  defaultValue={it.name}
+                  onBlur={(e) => {
+                    const v = e.target.value.trim();
+                    if (!v) return;
+                    if (v !== it.name) renameListItem("timeTypes", it.id, v);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+                  }}
+                />
+                <button
+                  className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-800"
+                  onClick={() => removeListItem("timeTypes", it.id)}
+                  title="Удалить тип"
+                >
+                  Удалить
+                </button>
+              </div>
+            ))
+          )}
+        </div>
+      </div>
+
       {/* Таймер */}
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
         <div className="text-lg font-semibold">Таймер</div>
@@ -343,7 +429,7 @@ export default function TimePage() {
                         const start = new Date(l.startedAt);
                         const end = new Date(l.endedAt);
                         const taskTitle = l.taskId ? taskTitleById.get(l.taskId) ?? "—" : "—";
-                        const typeTitle = l.timeTypeId ? (timeTypeNameById.get(l.timeTypeId) ?? "—") : "—";
+                        const typeTitle = l.timeTypeId ? (timeTypeNameById.get(l.timeTypeId) ?? "тип удалён") : "—";
                         const isEditing = editingId === l.id;
 
                         return (
