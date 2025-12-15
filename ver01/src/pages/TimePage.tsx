@@ -23,7 +23,6 @@ function toLocalDateTimeInput(ms: number) {
 }
 
 function parseLocalDateTimeInput(v: string) {
-  // "YYYY-MM-DDTHH:mm" -> local time
   const t = new Date(v).getTime();
   return Number.isFinite(t) ? t : NaN;
 }
@@ -39,16 +38,29 @@ function fmtDuration(mins: number) {
 export default function TimePage() {
   const s = useAppState();
 
-  const tasks = useMemo(() => [...s.tasks].sort((a, b) => b.updatedAt - a.updatedAt), [s.tasks]);
+  const tasks = useMemo(
+    () => [...s.tasks].sort((a, b) => b.updatedAt - a.updatedAt),
+    [s.tasks]
+  );
+
   const taskTitleById = useMemo(() => {
     const map = new Map<string, string>();
     for (const t of s.tasks) map.set(t.id, t.title);
     return map;
   }, [s.tasks]);
 
+  const timeTypes = useMemo(() => s.lists.timeTypes ?? [], [s.lists.timeTypes]);
+
+  const timeTypeNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const it of timeTypes) map.set(it.id, it.name);
+    return map;
+  }, [timeTypes]);
+
   // ---- таймер ----
   const active = s.activeTimer;
   const [timerTaskId, setTimerTaskId] = useState<string>("");
+  const [timerTimeTypeId, setTimerTimeTypeId] = useState<string>("");
   const [timerNote, setTimerNote] = useState<string>("");
 
   const elapsedMin = useMemo(() => {
@@ -63,18 +75,21 @@ export default function TimePage() {
   const defaultEnd = useMemo(() => toLocalDateTimeInput(nowMs), [nowMs]);
 
   const [manualTaskId, setManualTaskId] = useState<string>("");
+  const [manualTimeTypeId, setManualTimeTypeId] = useState<string>("");
   const [manualStart, setManualStart] = useState<string>(defaultStart);
   const [manualEnd, setManualEnd] = useState<string>(defaultEnd);
   const [manualNote, setManualNote] = useState<string>("");
 
   const manualStartMs = useMemo(() => parseLocalDateTimeInput(manualStart), [manualStart]);
   const manualEndMs = useMemo(() => parseLocalDateTimeInput(manualEnd), [manualEnd]);
-  const manualValid = Number.isFinite(manualStartMs) && Number.isFinite(manualEndMs) && manualEndMs > manualStartMs;
+  const manualValid =
+    Number.isFinite(manualStartMs) && Number.isFinite(manualEndMs) && manualEndMs > manualStartMs;
   const manualMinutes = manualValid ? Math.max(1, Math.ceil((manualEndMs - manualStartMs) / 60000)) : 0;
 
   // ---- редактирование записи ----
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTaskId, setEditTaskId] = useState<string>("");
+  const [editTimeTypeId, setEditTimeTypeId] = useState<string>("");
   const [editStart, setEditStart] = useState<string>("");
   const [editEnd, setEditEnd] = useState<string>("");
   const [editNote, setEditNote] = useState<string>("");
@@ -84,6 +99,7 @@ export default function TimePage() {
     if (!l) return;
     setEditingId(l.id);
     setEditTaskId(l.taskId ?? "");
+    setEditTimeTypeId(l.timeTypeId ?? "");
     setEditStart(toLocalDateTimeInput(l.startedAt));
     setEditEnd(toLocalDateTimeInput(l.endedAt));
     setEditNote(l.note ?? "");
@@ -97,6 +113,7 @@ export default function TimePage() {
 
     updateTimeLog(editingId, {
       taskId: editTaskId ? editTaskId : null,
+      timeTypeId: editTimeTypeId ? editTimeTypeId : null,
       startedAt,
       endedAt,
       note: editNote ?? "",
@@ -105,7 +122,6 @@ export default function TimePage() {
   }
 
   const grouped = useMemo(() => {
-    // группируем по дате начала (локально)
     const groups = new Map<string, typeof s.timeLogs>();
     for (const l of s.timeLogs) {
       const key = new Date(l.startedAt).toLocaleDateString("ru-RU");
@@ -113,7 +129,6 @@ export default function TimePage() {
       arr.push(l);
       groups.set(key, arr);
     }
-    // сортировка групп по убыванию даты (по первому элементу)
     const entries = Array.from(groups.entries()).sort((a, b) => {
       const a0 = a[1][0]?.startedAt ?? 0;
       const b0 = b[1][0]?.startedAt ?? 0;
@@ -128,7 +143,7 @@ export default function TimePage() {
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
         <div className="text-lg font-semibold">Таймер</div>
 
-        <div className="mt-3 grid gap-2 md:grid-cols-[1fr,auto,auto] md:items-end">
+        <div className="mt-3 grid gap-2 md:grid-cols-[1fr,1fr,auto,auto] md:items-end">
           <div className="grid gap-1">
             <div className="text-xs text-slate-400">Привязка к задаче</div>
             <select
@@ -146,10 +161,27 @@ export default function TimePage() {
             </select>
           </div>
 
+          <div className="grid gap-1">
+            <div className="text-xs text-slate-400">Тип времени</div>
+            <select
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={timerTimeTypeId}
+              onChange={(e) => setTimerTimeTypeId(e.target.value)}
+              disabled={!!active}
+            >
+              <option value="">(не выбран)</option>
+              {timeTypes.map((it) => (
+                <option key={it.id} value={it.id}>
+                  {it.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
           {!active ? (
             <button
               className="rounded-lg bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950"
-              onClick={() => startTimer(timerTaskId || null)}
+              onClick={() => startTimer(timerTaskId || null, timerTimeTypeId || null)}
             >
               Старт
             </button>
@@ -205,6 +237,22 @@ export default function TimePage() {
           </div>
 
           <div className="grid gap-1">
+            <div className="text-xs text-slate-400">Тип времени</div>
+            <select
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={manualTimeTypeId}
+              onChange={(e) => setManualTimeTypeId(e.target.value)}
+            >
+              <option value="">(не выбран)</option>
+              {timeTypes.map((it) => (
+                <option key={it.id} value={it.id}>
+                  {it.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div className="grid gap-1">
             <div className="text-xs text-slate-400">Комментарий</div>
             <input
               className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
@@ -252,6 +300,7 @@ export default function TimePage() {
             onClick={() => {
               addTimeLogManual({
                 taskId: manualTaskId ? manualTaskId : null,
+                timeTypeId: manualTimeTypeId ? manualTimeTypeId : null,
                 startedAt: manualStartMs,
                 endedAt: manualEndMs,
                 note: manualNote ?? "",
@@ -277,12 +326,13 @@ export default function TimePage() {
                 <div className="text-sm font-semibold text-slate-200">{day}</div>
 
                 <div className="overflow-x-auto rounded-lg border border-slate-800">
-                  <table className="min-w-[760px] w-full text-sm">
+                  <table className="min-w-[900px] w-full text-sm">
                     <thead className="bg-slate-950">
                       <tr className="text-left text-slate-400">
                         <th className="p-2">Начало</th>
                         <th className="p-2">Окончание</th>
                         <th className="p-2">Интервал</th>
+                        <th className="p-2">Тип</th>
                         <th className="p-2">Задача</th>
                         <th className="p-2">Комментарий</th>
                         <th className="p-2 w-[170px]">Действия</th>
@@ -293,7 +343,7 @@ export default function TimePage() {
                         const start = new Date(l.startedAt);
                         const end = new Date(l.endedAt);
                         const taskTitle = l.taskId ? taskTitleById.get(l.taskId) ?? "—" : "—";
-
+                        const typeTitle = l.timeTypeId ? (timeTypeNameById.get(l.timeTypeId) ?? "—") : "—";
                         const isEditing = editingId === l.id;
 
                         return (
@@ -307,6 +357,7 @@ export default function TimePage() {
                                   {end.toLocaleTimeString("ru-RU", { hour: "2-digit", minute: "2-digit" })}
                                 </td>
                                 <td className="p-2 text-slate-200">{fmtDuration(l.minutes)}</td>
+                                <td className="p-2 text-slate-200">{typeTitle}</td>
                                 <td className="p-2 text-slate-200">{taskTitle}</td>
                                 <td className="p-2 text-slate-200">{l.note || ""}</td>
                                 <td className="p-2">
@@ -353,6 +404,22 @@ export default function TimePage() {
                                     return fmtDuration(mins);
                                   })()}
                                 </td>
+
+                                <td className="p-2">
+                                  <select
+                                    className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-xs"
+                                    value={editTimeTypeId}
+                                    onChange={(e) => setEditTimeTypeId(e.target.value)}
+                                  >
+                                    <option value="">(не выбран)</option>
+                                    {timeTypes.map((it) => (
+                                      <option key={it.id} value={it.id}>
+                                        {it.name}
+                                      </option>
+                                    ))}
+                                  </select>
+                                </td>
+
                                 <td className="p-2">
                                   <select
                                     className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-xs"
@@ -367,6 +434,7 @@ export default function TimePage() {
                                     ))}
                                   </select>
                                 </td>
+
                                 <td className="p-2">
                                   <input
                                     className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-xs"
@@ -375,6 +443,7 @@ export default function TimePage() {
                                     placeholder="Комментарий"
                                   />
                                 </td>
+
                                 <td className="p-2">
                                   <div className="flex items-center gap-2">
                                     <button
