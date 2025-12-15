@@ -362,6 +362,30 @@ export function deleteTimeLog(id: ID) {
   setState((s) => ({ ...s, timeLogs: s.timeLogs.filter((l) => l.id !== id) }));
 }
 
+export function updateTimeLog(
+  id: ID,
+  patch: Partial<Pick<TimeLog, "taskId" | "startedAt" | "endedAt" | "note">>
+) {
+  setState((s) => ({
+    ...s,
+    timeLogs: s.timeLogs.map((l) => {
+      if (l.id !== id) return l;
+
+      const startedAt = typeof patch.startedAt === "number" ? patch.startedAt : l.startedAt;
+      const endedAt = typeof patch.endedAt === "number" ? patch.endedAt : l.endedAt;
+      const minutes = Math.max(1, Math.round((endedAt - startedAt) / 60000));
+
+      return {
+        ...l,
+        ...patch,
+        startedAt,
+        endedAt,
+        minutes
+      };
+    })
+  }));
+}
+
 // ---------------- Lists ----------------
 
 export function addListItem(key: ListKey, name: string) {
