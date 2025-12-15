@@ -6,6 +6,7 @@ import {
   weekDays,
   ymdAddDays,
 } from "../data/db";
+import type { TimeLogKind } from "../data/db";
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -42,6 +43,10 @@ function clamp01(x: number) {
 
 function percent(x: number) {
   return `${Math.round(clamp01(x) * 100)}%`;
+}
+
+function kindOf(raw: any): TimeLogKind {
+  return raw === "sink" || raw === "rest" ? raw : "useful";
 }
 
 function minutesElapsedInTodayWindow(now: Date, dayYmd: string, startHour: number, endHour: number) {
@@ -116,26 +121,55 @@ export default function AnalyticsPage() {
     return map;
   }, [s.lists.timeTypes]);
 
+  const sinksById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const it of (s.lists.sinks ?? [])) map.set(it.id, it.name);
+    return map;
+  }, [s.lists.sinks]);
+
   const weekLogs = useMemo(() => {
     const start = new Date(`${weekStart}T00:00:00`).getTime();
     const end = new Date(`${ymdAddDays(weekStart, 7)}T00:00:00`).getTime();
     return s.timeLogs.filter((l) => l.startedAt >= start && l.startedAt < end);
   }, [s.timeLogs, weekStart]);
 
-  const totalTrackedMin = useMemo(
-    () => weekLogs.reduce((sum, l) => sum + (l.minutes ?? 0), 0),
-    [weekLogs]
-  );
+  const { usefulMin, restMin, sinkMin, trackedTotalMin } = useMemo(() => {
+    let usefulMin = 0;
+    let restMin = 0;
+    let sinkMin = 0;
+    for (const l of weekLogs) {
+      const mins = l.minutes ?? 0;
+      const k = kindOf(l.kind);
+      if (k === "useful") usefulMin += mins;
+      else if (k === "rest") restMin += mins;
+      else sinkMin += mins;
+    }
+    return { usefulMin, restMin, sinkMin, trackedTotalMin: usefulMin + restMin + sinkMin };
+  }, [weekLogs]);
 
   const untrackedMin = useMemo(
-    () => Math.max(0, elapsedWeekWindowMin - totalTrackedMin),
-    [elapsedWeekWindowMin, totalTrackedMin]
+    () => Math.max(0, elapsedWeekWindowMin - trackedTotalMin),
+    [elapsedWeekWindowMin, trackedTotalMin]
   );
 
-  const kpdApprox = useMemo(() => {
+  const kpd = useMemo(() => {
     if (elapsedWeekWindowMin <= 0) return 0;
-    return totalTrackedMin / elapsedWeekWindowMin;
-  }, [totalTrackedMin, elapsedWeekWindowMin]);
+    return usefulMin / elapsedWeekWindowMin;
+  }, [usefulMin, elapsedWeekWindowMin]);
+
+  const coverage = useMemo(() => {
+    if (elapsedWeekWindowMin <= 0) return 0;
+    return trackedTotalMin / elapsedWeekWindowMin;
+  }, [trackedTotalMin, elapsedWeekWindowMin]);
+
+  const usefulLogs = useMemo(
+    () => weekLogs.filter((l) => kindOf(l.kind) === "useful"),
+    [weekLogs]
+  );
+  const sinkLogs = useMemo(
+    () => weekLogs.filter((l) => kindOf(l.kind) === "sink"),
+    [weekLogs]
+  );
 
   const byDay: RowDay[] = useMemo(() => {
     const map = new Map<string, RowDay>();
@@ -153,9 +187,9 @@ export default function AnalyticsPage() {
     return days.map((d) => map.get(d)!).sort((a, b) => a.ymd.localeCompare(b.ymd));
   }, [weekLogs, days]);
 
-  const topTasks = useMemo(() => {
+  const topUsefulTasks = useMemo(() => {
     const acc = new Map<string, number>();
-    for (const l of weekLogs) {
+    for (const l of usefulLogs) {
       const id = l.taskId ?? "__none__";
       acc.set(id, (acc.get(id) ?? 0) + (l.minutes ?? 0));
     }
@@ -167,11 +201,11 @@ export default function AnalyticsPage() {
       })
       .sort((a, b) => b.minutes - a.minutes)
       .slice(0, 12);
-  }, [weekLogs, tasksById]);
+  }, [usefulLogs, tasksById]);
 
   const topTags = useMemo(() => {
     const acc = new Map<string, number>();
-    for (const l of weekLogs) {
+    for (const l of usefulLogs) {
       if (!l.taskId) continue;
       const meta = tasksById.get(l.taskId);
       const tags = meta?.tags ?? [];
@@ -181,7 +215,7 @@ export default function AnalyticsPage() {
       .map(([tag, minutes]) => ({ tag, minutes }))
       .sort((a, b) => b.minutes - a.minutes)
       .slice(0, 12);
-  }, [weekLogs, tasksById]);
+  }, [usefulLogs, tasksById]);
 
   const topTimeTypes = useMemo(() => {
     const acc = new Map<string, number>();
@@ -198,6 +232,21 @@ export default function AnalyticsPage() {
       .sort((a, b) => b.minutes - a.minutes)
       .slice(0, 12);
   }, [weekLogs, timeTypesById]);
+
+  const topSinks = useMemo(() => {
+    const acc = new Map<string, number>();
+    for (const l of sinkLogs) {
+      const id = l.sinkId ?? "__none__";
+      acc.set(id, (acc.get(id) ?? 0) + (l.minutes ?? 0));
+    }
+    return Array.from(acc.entries())
+      .map(([sinkId, minutes]) => {
+        const title = sinkId === "__none__" ? "(не выбран)" : (sinksById.get(sinkId) ?? "(поглотитель удалён)");
+        return { sinkId, title, minutes };
+      })
+      .sort((a, b) => b.minutes - a.minutes)
+      .slice(0, 12);
+  }, [sinkLogs, sinksById]);
 
   const maxDayMin = useMemo(() => Math.max(1, ...byDay.map((r) => r.minutes)), [byDay]);
 
@@ -241,22 +290,29 @@ export default function AnalyticsPage() {
           </div>
         </div>
 
+        <div className="mt-2 text-xs text-slate-500">
+          КПД (честный): <span className="text-slate-200 font-semibold">{percent(kpd)}</span>
+          <span className="mx-2">•</span>
+          Учётность: <span className="text-slate-200 font-semibold">{percent(coverage)}</span>
+        </div>
+
         <div className="mt-3 grid gap-2 md:grid-cols-4">
           <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
-            <div className="text-xs uppercase tracking-wide text-slate-400">Учтённое время</div>
-            <div className="mt-1 text-xl font-semibold">{fmtMinutes(totalTrackedMin)}</div>
-            <div className="text-xs text-slate-500">по таймшиту</div>
+            <div className="text-xs uppercase tracking-wide text-slate-400">Полезное (нетто)</div>
+            <div className="mt-1 text-xl font-semibold">{fmtMinutes(usefulMin)}</div>
+            <div className="text-xs text-slate-500">учтённое полезное</div>
           </div>
 
           <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
-            <div className="text-xs uppercase tracking-wide text-slate-400">Окно (брутто)</div>
-            <div className="mt-1 text-xl font-semibold">
-              {fmtMinutes(isCurrentWeek ? elapsedWeekWindowMin : weekWindowMin)}
-            </div>
-            <div className="text-xs text-slate-500">
-              {s.settings.dayStartHour}:00 — {s.settings.dayEndHour}:00
-              {isCurrentWeek ? ` • полная неделя: ${fmtMinutes(weekWindowMin)}` : ""}
-            </div>
+            <div className="text-xs uppercase tracking-wide text-slate-400">Поглотители</div>
+            <div className="mt-1 text-xl font-semibold">{fmtMinutes(sinkMin)}</div>
+            <div className="text-xs text-slate-500">учтённое “слив”</div>
+          </div>
+
+          <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+            <div className="text-xs uppercase tracking-wide text-slate-400">Отдых</div>
+            <div className="mt-1 text-xl font-semibold">{fmtMinutes(restMin)}</div>
+            <div className="text-xs text-slate-500">сон/восстановление</div>
           </div>
 
           <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
@@ -266,12 +322,15 @@ export default function AnalyticsPage() {
               {isCurrentWeek ? "в пределах прошедшего окна" : "в пределах окна недели"}
             </div>
           </div>
+        </div>
 
-          <div className="rounded-xl border border-slate-800 bg-slate-900 p-3">
-            <div className="text-xs uppercase tracking-wide text-slate-400">КПД (прибл.)</div>
-            <div className="mt-1 text-xl font-semibold">{percent(kpdApprox)}</div>
-            <div className="text-xs text-slate-500">учтённое / прошедшее окно</div>
-          </div>
+        <div className="mt-3 text-xs text-slate-500">
+          Окно (брутто):{" "}
+          <span className="text-slate-200 font-semibold">
+            {fmtMinutes(isCurrentWeek ? elapsedWeekWindowMin : weekWindowMin)}
+          </span>{" "}
+          • Settings: {s.settings.dayStartHour}:00 — {s.settings.dayEndHour}:00
+          {isCurrentWeek ? ` • полная неделя: ${fmtMinutes(weekWindowMin)}` : ""}
         </div>
       </div>
 
@@ -291,7 +350,10 @@ export default function AnalyticsPage() {
                     <div className="text-sm font-semibold">{fmtMinutes(r.minutes)}</div>
                   </div>
                   <div className="mt-2 h-2 w-full rounded bg-slate-950">
-                    <div className="h-2 rounded bg-slate-700" style={{ width: `${Math.round(clamp01(ratio) * 100)}%` }} />
+                    <div
+                      className="h-2 rounded bg-slate-700"
+                      style={{ width: `${Math.round(clamp01(ratio) * 100)}%` }}
+                    />
                   </div>
                   <div className="mt-1 text-xs text-slate-500">
                     Доля от дневного «окна»: {percent((r.minutes / dayWindowMin) || 0)}
@@ -303,12 +365,12 @@ export default function AnalyticsPage() {
         </div>
 
         <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
-          <div className="font-semibold">ТОП задач по времени</div>
+          <div className="font-semibold">ТОП полезных задач</div>
           <div className="mt-2 grid gap-2">
-            {topTasks.length === 0 ? (
-              <div className="text-sm text-slate-400">Нет данных за эту неделю</div>
+            {topUsefulTasks.length === 0 ? (
+              <div className="text-sm text-slate-400">Нет полезных логов за эту неделю</div>
             ) : (
-              topTasks.map((x) => (
+              topUsefulTasks.map((x) => (
                 <div
                   key={x.taskId}
                   className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2"
@@ -316,7 +378,7 @@ export default function AnalyticsPage() {
                   <div className="min-w-0">
                     <div className="truncate text-sm text-slate-200">{x.title}</div>
                     <div className="text-xs text-slate-500">
-                      {percent(totalTrackedMin > 0 ? x.minutes / totalTrackedMin : 0)} от учтённого
+                      {percent(usefulMin > 0 ? x.minutes / usefulMin : 0)} от полезного
                     </div>
                   </div>
                   <div className="text-sm font-semibold">{fmtMinutes(x.minutes)}</div>
@@ -325,11 +387,33 @@ export default function AnalyticsPage() {
             )}
           </div>
 
-          <div className="mt-4 font-semibold">ТОП тегов</div>
+          <div className="mt-4 font-semibold">ТОП поглотителей</div>
+          <div className="mt-2 grid gap-2">
+            {topSinks.length === 0 ? (
+              <div className="text-sm text-slate-400">Нет “поглотителей” за эту неделю</div>
+            ) : (
+              topSinks.map((x) => (
+                <div
+                  key={x.sinkId}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2"
+                >
+                  <div className="min-w-0">
+                    <div className="truncate text-sm text-slate-200">{x.title}</div>
+                    <div className="text-xs text-slate-500">
+                      {percent(sinkMin > 0 ? x.minutes / sinkMin : 0)} от поглотителей
+                    </div>
+                  </div>
+                  <div className="text-sm font-semibold">{fmtMinutes(x.minutes)}</div>
+                </div>
+              ))
+            )}
+          </div>
+
+          <div className="mt-4 font-semibold">ТОП тегов (по полезному)</div>
           <div className="mt-2 grid gap-2">
             {topTags.length === 0 ? (
               <div className="text-sm text-slate-400">
-                Пока пусто. Теги считаются по задачам, привязанным к таймшиту.
+                Пока пусто. Теги считаются по задачам, привязанным к полезным логам.
               </div>
             ) : (
               topTags.map((x) => (
@@ -344,7 +428,7 @@ export default function AnalyticsPage() {
             )}
           </div>
 
-          <div className="mt-4 font-semibold">ТОП типов времени</div>
+          <div className="mt-4 font-semibold">ТОП типов времени (всё учтённое)</div>
           <div className="mt-2 grid gap-2">
             {topTimeTypes.length === 0 ? (
               <div className="text-sm text-slate-400">Нет данных за эту неделю</div>
@@ -357,7 +441,7 @@ export default function AnalyticsPage() {
                   <div className="min-w-0">
                     <div className="truncate text-sm text-slate-200">{x.title}</div>
                     <div className="text-xs text-slate-500">
-                      {percent(totalTrackedMin > 0 ? x.minutes / totalTrackedMin : 0)} от учтённого
+                      {percent(trackedTotalMin > 0 ? x.minutes / trackedTotalMin : 0)} от учтённого
                     </div>
                   </div>
                   <div className="text-sm font-semibold">{fmtMinutes(x.minutes)}</div>
