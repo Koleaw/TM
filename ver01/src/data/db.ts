@@ -14,30 +14,40 @@ export type Task = {
   status: TaskStatus;
 
   // планирование
-  plannedDate: string | null; // YYYY-MM-DD
-  plannedStart: string | null; // HH:MM (если есть — считаем "жесткой")
+  plannedDate: string | null;   // YYYY-MM-DD
+  plannedStart: string | null;  // HH:MM (если есть — считаем "жесткой")
   estimateMin: number | null;
 
   createdAt: number;
   updatedAt: number;
 };
 
+export type TimeLogKind = "useful" | "sink" | "rest";
+
 export type TimeLog = {
   id: ID;
   taskId: ID | null;
   startedAt: number; // epoch ms
-  endedAt: number; // epoch ms
-  minutes: number; // вычисляемое поле (поддерживаем консистентность при правках)
-  note: string; // комментарий/описание
+  endedAt: number;   // epoch ms
+  minutes: number;
+  note: string;
+
+  /**
+   * Классификация времени для честной аналитики:
+   * useful — полезное (нетто)
+   * sink   — поглотители
+   * rest   — отдых/восстановление
+   *
+   * Сделано OPTIONAL, чтобы не сломать старые логи/код (миграция ниже).
+   */
+  kind?: TimeLogKind;
+  /**
+   * Если kind === "sink", можно привязать к справочнику "Поглотители"
+   */
+  sinkId?: ID | null;
 };
 
-export type ListKey =
-  | "goals"
-  | "projects"
-  | "contexts"
-  | "roles"
-  | "motivationModes"
-  | "sinks";
+export type ListKey = "goals" | "projects" | "contexts" | "roles" | "motivationModes" | "sinks";
 export type ListItem = { id: ID; name: string };
 
 export type ListsState = Record<ListKey, ListItem[]>;
@@ -56,7 +66,7 @@ export type ReviewEntry = {
 export type Settings = {
   weekStartsOn: 1 | 0; // 1=Mon, 0=Sun
   dayStartHour: number; // 0-23
-  dayEndHour: number; // 0-23
+  dayEndHour: number;   // 0-23
   tagLibrary: string[];
 };
 
@@ -67,15 +77,12 @@ export type AppState = {
   lists: ListsState;
   reviews: ReviewEntry[];
   settings: Settings;
-  activeTimer: { taskId: ID | null; startedAt: number } | null;
+  activeTimer: { taskId: ID | null; startedAt: number; kind?: TimeLogKind; sinkId?: ID | null } | null;
 };
 
 function uid(): ID {
   // @ts-ignore
-  return (
-    globalThis.crypto?.randomUUID?.() ??
-    `id_${Math.random().toString(16).slice(2)}_${Date.now()}`
-  );
+  return (globalThis.crypto?.randomUUID?.() ?? `id_${Math.random().toString(16).slice(2)}_${Date.now()}`);
 }
 
 function now() {
@@ -93,21 +100,18 @@ export function todayYMD(): string {
 
 export function ymdAddDays(ymd: string, delta: number): string {
   const [y, m, d] = ymd.split("-").map(Number);
-  const dt = new Date(y, m - 1, d);
+  const dt = new Date(y, (m - 1), d);
   dt.setDate(dt.getDate() + delta);
   return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
 }
 
 export function getWeekStart(ymd: string, weekStartsOn: 1 | 0): string {
   const [y, m, d] = ymd.split("-").map(Number);
-  const dt = new Date(y, m - 1, d);
+  const dt = new Date(y, (m - 1), d);
   const day = dt.getDay(); // 0 Sun..6 Sat
-  const diff =
-    weekStartsOn === 1
-      ? day === 0
-        ? -6
-        : 1 - day // to Monday
-      : -day; // to Sunday
+  const diff = weekStartsOn === 1
+    ? (day === 0 ? -6 : 1 - day) // to Monday
+    : -day; // to Sunday
   dt.setDate(dt.getDate() + diff);
   return `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
 }
@@ -126,30 +130,79 @@ const DEFAULT_STATE: AppState = {
     contexts: [],
     roles: [],
     motivationModes: [],
-    sinks: [],
+    sinks: []
   },
   reviews: [],
   settings: {
     weekStartsOn: 1,
     dayStartHour: 8,
     dayEndHour: 21,
-    tagLibrary: ["#карьера", "#учеба", "#здоровье", "#дом", "#рутина"],
+    tagLibrary: ["#карьера", "#учеба", "#здоровье", "#дом", "#рутина"]
   },
-  activeTimer: null,
+  activeTimer: null
 };
+
+function normalizeTask(t: any): Task {
+  return {
+    id: String(t.id ?? uid()),
+    title: String(t.title ?? "Без названия"),
+    notes: String(t.notes ?? ""),
+    tags: Array.isArray(t.tags) ? t.tags.map(String) : [],
+    status: (t.status === "done" ? "done" : "todo"),
+    plannedDate: t.plannedDate ?? null,
+    plannedStart: t.plannedStart ?? null,
+    estimateMin: (typeof t.estimateMin === "number" ? t.estimateMin : null),
+    createdAt: (typeof t.createdAt === "number" ? t.createdAt : now()),
+    updatedAt: (typeof t.updatedAt === "number" ? t.updatedAt : now())
+  };
+}
+
+function normalizeTimeLog(l: any): TimeLog {
+  const startedAt = typeof l.startedAt === "number" ? l.startedAt : now();
+  const endedAt = typeof l.endedAt === "number" ? l.endedAt : startedAt;
+  const minutes = typeof l.minutes === "number"
+    ? l.minutes
+    : Math.max(1, Math.round((endedAt - startedAt) / 60000));
+
+  const kindRaw = l.kind;
+  const kind: TimeLogKind | undefined =
+    kindRaw === "useful" || kindRaw === "sink" || kindRaw === "rest"
+      ? kindRaw
+      : undefined;
+
+  const sinkId = (l.sinkId === null || typeof l.sinkId === "string") ? l.sinkId : undefined;
+
+  return {
+    id: String(l.id ?? uid()),
+    taskId: (l.taskId === null || typeof l.taskId === "string") ? l.taskId : null,
+    startedAt,
+    endedAt,
+    minutes,
+    note: String(l.note ?? ""),
+    kind,
+    sinkId
+  };
+}
 
 function loadState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_STATE;
+
     const parsed = JSON.parse(raw) as Partial<AppState>;
-    // мягкий merge
-    return {
+
+    const merged: AppState = {
       ...DEFAULT_STATE,
       ...parsed,
       lists: { ...DEFAULT_STATE.lists, ...(parsed.lists ?? {}) },
       settings: { ...DEFAULT_STATE.settings, ...(parsed.settings ?? {}) },
+      tasks: Array.isArray(parsed.tasks) ? parsed.tasks.map(normalizeTask) : DEFAULT_STATE.tasks,
+      timeLogs: Array.isArray(parsed.timeLogs) ? parsed.timeLogs.map(normalizeTimeLog) : DEFAULT_STATE.timeLogs,
+      reviews: Array.isArray(parsed.reviews) ? (parsed.reviews as any) : DEFAULT_STATE.reviews,
+      activeTimer: (parsed.activeTimer as any) ?? DEFAULT_STATE.activeTimer
     };
+
+    return merged;
   } catch {
     return DEFAULT_STATE;
   }
@@ -189,10 +242,7 @@ export function useAppState(): AppState {
 
 // ---------------- Tasks ----------------
 
-export function createTask(
-  title: string,
-  opts?: Partial<Omit<Task, "id" | "createdAt" | "updatedAt">>
-): ID {
+export function createTask(title: string, opts?: Partial<Omit<Task, "id" | "createdAt" | "updatedAt">>): ID {
   const t: Task = {
     id: uid(),
     title: title.trim() || "Без названия",
@@ -204,12 +254,12 @@ export function createTask(
     estimateMin: null,
     createdAt: now(),
     updatedAt: now(),
-    ...(opts ?? {}),
+    ...(opts ?? {})
   };
 
   setState((s) => ({
     ...s,
-    tasks: [t, ...s.tasks],
+    tasks: [t, ...s.tasks]
   }));
 
   return t.id;
@@ -218,7 +268,9 @@ export function createTask(
 export function updateTask(id: ID, patch: Partial<Task>) {
   setState((s) => ({
     ...s,
-    tasks: s.tasks.map((t) => (t.id === id ? { ...t, ...patch, updatedAt: now() } : t)),
+    tasks: s.tasks.map((t) =>
+      t.id === id ? { ...t, ...patch, updatedAt: now() } : t
+    )
   }));
 }
 
@@ -236,31 +288,25 @@ export function deleteTask(id: ID) {
   setState((s) => ({
     ...s,
     tasks: s.tasks.filter((t) => t.id !== id),
-    timeLogs: s.timeLogs.filter((l) => l.taskId !== id),
+    timeLogs: s.timeLogs.filter((l) => l.taskId !== id)
   }));
 }
 
 // ---------------- Timer / logs ----------------
 
-function calcMinutes(startedAt: number, endedAt: number): number {
-  const diff = endedAt - startedAt;
-  // для таймшита и таймера логичнее "округлять вверх" (часть минуты тоже считается)
-  return Math.max(1, Math.ceil(diff / 60000));
-}
-
-export function startTimer(taskId: ID | null) {
+export function startTimer(taskId: ID | null, kind: TimeLogKind = "useful", sinkId: ID | null = null) {
   setState((s) => ({
     ...s,
-    activeTimer: { taskId, startedAt: now() },
+    activeTimer: { taskId, startedAt: now(), kind, sinkId }
   }));
 }
 
-export function stopTimer(note: string = "") {
+export function stopTimer(note: string = "", kind?: TimeLogKind, sinkId?: ID | null) {
   const active = STATE.activeTimer;
   if (!active) return;
 
   const endedAt = now();
-  const minutes = calcMinutes(active.startedAt, endedAt);
+  const minutes = Math.max(1, Math.round((endedAt - active.startedAt) / 60000));
 
   const log: TimeLog = {
     id: uid(),
@@ -269,52 +315,46 @@ export function stopTimer(note: string = "") {
     endedAt,
     minutes,
     note,
+    kind: kind ?? active.kind ?? "useful",
+    sinkId: sinkId ?? active.sinkId ?? null
   };
 
   setState((s) => ({
     ...s,
     activeTimer: null,
-    timeLogs: [log, ...s.timeLogs],
+    timeLogs: [log, ...s.timeLogs]
   }));
 }
 
-// ручное добавление записи (старт/финиш)
-export function addTimeLogManual(params: {
+/**
+ * Для ручного ввода (таймшит строкой)
+ */
+export function addTimeLog(input: {
   taskId: ID | null;
   startedAt: number;
   endedAt: number;
-  note: string;
+  note?: string;
+  kind?: TimeLogKind;
+  sinkId?: ID | null;
 }) {
-  const { taskId, startedAt, endedAt, note } = params;
-
-  if (!Number.isFinite(startedAt) || !Number.isFinite(endedAt)) return;
-  if (endedAt <= startedAt) return;
+  const startedAt = input.startedAt;
+  const endedAt = input.endedAt;
+  const minutes = Math.max(1, Math.round((endedAt - startedAt) / 60000));
 
   const log: TimeLog = {
     id: uid(),
-    taskId,
+    taskId: input.taskId ?? null,
     startedAt,
     endedAt,
-    minutes: calcMinutes(startedAt, endedAt),
-    note: note ?? "",
+    minutes,
+    note: String(input.note ?? ""),
+    kind: input.kind ?? "useful",
+    sinkId: input.sinkId ?? null
   };
 
   setState((s) => ({
     ...s,
-    timeLogs: [log, ...s.timeLogs],
-  }));
-}
-
-// редактирование записи (с пересчётом minutes)
-export function updateTimeLog(id: ID, patch: Partial<Omit<TimeLog, "id" | "minutes">>) {
-  setState((s) => ({
-    ...s,
-    timeLogs: s.timeLogs.map((l) => {
-      if (l.id !== id) return l;
-      const next = { ...l, ...patch };
-      if (next.endedAt <= next.startedAt) return l; // защита от некорректной правки
-      return { ...next, minutes: calcMinutes(next.startedAt, next.endedAt) };
-    }),
+    timeLogs: [log, ...s.timeLogs]
   }));
 }
 
@@ -330,7 +370,7 @@ export function addListItem(key: ListKey, name: string) {
   const item: ListItem = { id: uid(), name: trimmed };
   setState((s) => ({
     ...s,
-    lists: { ...s.lists, [key]: [item, ...(s.lists[key] ?? [])] },
+    lists: { ...s.lists, [key]: [item, ...(s.lists[key] ?? [])] }
   }));
 }
 
@@ -341,15 +381,15 @@ export function renameListItem(key: ListKey, id: ID, name: string) {
     ...s,
     lists: {
       ...s.lists,
-      [key]: (s.lists[key] ?? []).map((it) => (it.id === id ? { ...it, name: trimmed } : it)),
-    },
+      [key]: (s.lists[key] ?? []).map((it) => (it.id === id ? { ...it, name: trimmed } : it))
+    }
   }));
 }
 
 export function removeListItem(key: ListKey, id: ID) {
   setState((s) => ({
     ...s,
-    lists: { ...s.lists, [key]: (s.lists[key] ?? []).filter((it) => it.id !== id) },
+    lists: { ...s.lists, [key]: (s.lists[key] ?? []).filter((it) => it.id !== id) }
   }));
 }
 
@@ -360,8 +400,8 @@ export function addTagToLibrary(tag: string) {
     ...s,
     settings: {
       ...s.settings,
-      tagLibrary: Array.from(new Set([t, ...s.settings.tagLibrary])),
-    },
+      tagLibrary: Array.from(new Set([t, ...s.settings.tagLibrary]))
+    }
   }));
 }
 
@@ -380,13 +420,15 @@ export function upsertReview(weekStart: string, patch: Partial<ReviewEntry>) {
         next: "",
         createdAt: now(),
         updatedAt: now(),
-        ...patch,
+        ...patch
       };
       return { ...s, reviews: [r, ...s.reviews] };
     }
     return {
       ...s,
-      reviews: s.reviews.map((r) => (r.weekStart === weekStart ? { ...r, ...patch, updatedAt: now() } : r)),
+      reviews: s.reviews.map((r) =>
+        r.weekStart === weekStart ? { ...r, ...patch, updatedAt: now() } : r
+      )
     };
   });
 }
@@ -399,14 +441,21 @@ export function exportBackupJson(): string {
 
 export function importBackupJson(jsonText: string) {
   const parsed = JSON.parse(jsonText) as AppState;
-  // минимальная защита
   if (!parsed || parsed.version !== 1) throw new Error("Bad backup format");
-  STATE = {
+
+  // нормализуем, чтобы старые бэкапы/логи не ломались
+  const normalized: AppState = {
     ...DEFAULT_STATE,
     ...parsed,
     lists: { ...DEFAULT_STATE.lists, ...(parsed.lists ?? {}) },
     settings: { ...DEFAULT_STATE.settings, ...(parsed.settings ?? {}) },
+    tasks: Array.isArray((parsed as any).tasks) ? (parsed as any).tasks.map(normalizeTask) : [],
+    timeLogs: Array.isArray((parsed as any).timeLogs) ? (parsed as any).timeLogs.map(normalizeTimeLog) : [],
+    reviews: Array.isArray((parsed as any).reviews) ? (parsed as any).reviews : [],
+    activeTimer: (parsed as any).activeTimer ?? null
   };
+
+  STATE = normalized;
   saveState(STATE);
   emit();
 }
@@ -429,7 +478,7 @@ export function tasksToCsv(tasks: Task[]) {
     "tags",
     "notes",
     "createdAt",
-    "updatedAt",
+    "updatedAt"
   ];
   const rows = tasks.map((t) => [
     t.id,
@@ -441,20 +490,22 @@ export function tasksToCsv(tasks: Task[]) {
     t.tags.join(" "),
     t.notes,
     new Date(t.createdAt).toISOString(),
-    new Date(t.updatedAt).toISOString(),
+    new Date(t.updatedAt).toISOString()
   ]);
   return [header, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n");
 }
 
 export function timeLogsToCsv(logs: TimeLog[]) {
-  const header = ["id", "taskId", "minutes", "startedAt", "endedAt", "note"];
+  const header = ["id", "taskId", "minutes", "startedAt", "endedAt", "kind", "sinkId", "note"];
   const rows = logs.map((l) => [
     l.id,
     l.taskId ?? "",
     l.minutes,
     new Date(l.startedAt).toISOString(),
     new Date(l.endedAt).toISOString(),
-    l.note,
+    l.kind ?? "useful",
+    l.sinkId ?? "",
+    l.note
   ]);
   return [header, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n");
 }
