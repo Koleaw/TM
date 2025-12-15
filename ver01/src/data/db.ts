@@ -358,6 +358,43 @@ export function addTimeLog(input: {
   }));
 }
 
+export function addTimeLogManual(input: {
+  taskId: ID | null;
+  startedAt: number;
+  endedAt: number;
+  note?: string;
+  [key: string]: any; // чтобы не ломалось, если TimePage передаёт доп.поля
+}) {
+  let startedAt = Number(input.startedAt);
+  let endedAt = Number(input.endedAt);
+
+  // защита от перепутанных дат
+  if (endedAt < startedAt) {
+    const tmp = startedAt;
+    startedAt = endedAt;
+    endedAt = tmp;
+  }
+
+  const minutes = Math.max(1, Math.round((endedAt - startedAt) / 60000));
+
+  const log = {
+    ...input,
+    id: uid(),
+    taskId: input.taskId ?? null,
+    startedAt,
+    endedAt,
+    minutes,
+    note: input.note ?? ""
+  };
+
+  setState((s) => ({
+    ...s,
+    timeLogs: [log, ...s.timeLogs]
+  }));
+
+  return log.id as ID;
+}
+
 export function deleteTimeLog(id: ID) {
   setState((s) => ({ ...s, timeLogs: s.timeLogs.filter((l) => l.id !== id) }));
 }
