@@ -164,67 +164,7 @@ export default function TimePage() {
 
   return (
     <div className="grid gap-3">
-      {/* Справочник типов времени */}
-      <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
-        <div className="text-lg font-semibold">Типы времени</div>
-        <div className="mt-1 text-sm text-slate-400">
-          Здесь можно добавлять свои (например: “Работа”, “Саморазвитие”, “Спорт”).
-          Удаление не трогает старые логи — у них просто будет “тип удалён” в аналитике.
-        </div>
-
-        <div className="mt-3 flex flex-wrap gap-2">
-          <input
-            className="min-w-[260px] flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-            value={newTimeTypeName}
-            onChange={(e) => setNewTimeTypeName(e.target.value)}
-            placeholder='Новый тип, например "Работа"'
-            onKeyDown={(e) => {
-              if (e.key === "Enter") addTimeType();
-            }}
-          />
-          <button
-            className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-40"
-            disabled={!newTimeTypeName.trim()}
-            onClick={addTimeType}
-          >
-            Добавить
-          </button>
-        </div>
-
-        <div className="mt-3 grid gap-2">
-          {timeTypes.length === 0 ? (
-            <div className="text-sm text-slate-400">Пока пусто</div>
-          ) : (
-            timeTypes.map((it) => (
-              <div
-                key={it.id}
-                className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2"
-              >
-                <input
-                  className="flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm text-slate-200"
-                  defaultValue={it.name}
-                  onBlur={(e) => {
-                    const v = e.target.value.trim();
-                    if (!v) return;
-                    if (v !== it.name) renameListItem("timeTypes", it.id, v);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                  }}
-                />
-                <button
-                  className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-800"
-                  onClick={() => removeListItem("timeTypes", it.id)}
-                  title="Удалить тип"
-                >
-                  Удалить
-                </button>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
-
+     
       {/* Таймер */}
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
         <div className="text-lg font-semibold">Таймер</div>
@@ -398,6 +338,66 @@ export default function TimePage() {
           </button>
         </div>
       </div>
+{/* Типы времени (редко) */}
+<details className="rounded-xl border border-slate-800 bg-slate-950 p-3">
+  <summary className="cursor-pointer text-lg font-semibold text-slate-200">
+    Типы времени <span className="text-sm font-normal text-slate-500">({timeTypes.length})</span>
+  </summary>
+
+  <div className="mt-2 text-sm text-slate-500">
+    Это справочник для выпадашки. Обычно трогаешь редко.
+  </div>
+
+  <div className="mt-3 grid gap-2">
+    <div className="flex flex-wrap gap-2">
+      <input
+        className="h-9 min-w-[240px] flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
+        value={newTimeTypeName}
+        onChange={(e) => setNewTimeTypeName(e.target.value)}
+        placeholder='Новый тип, например "Работа"'
+        onKeyDown={(e) => {
+          if (e.key === "Enter") addTimeType();
+        }}
+      />
+      <button
+        className="h-9 rounded-lg bg-slate-200 px-4 text-sm font-semibold text-slate-950 disabled:opacity-40"
+        disabled={!newTimeTypeName.trim()}
+        onClick={addTimeType}
+      >
+        Добавить
+      </button>
+    </div>
+
+    <div className="grid gap-2 md:grid-cols-2">
+      {timeTypes.map((it) => (
+        <div
+          key={it.id}
+          className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2"
+        >
+          <input
+            className="h-8 flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm text-slate-200"
+            defaultValue={it.name}
+            onBlur={(e) => {
+              const v = e.target.value.trim();
+              if (!v) return;
+              if (v !== it.name) renameListItem("timeTypes", it.id, v);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+            }}
+          />
+          <button
+            className="h-8 rounded-lg border border-slate-800 bg-slate-950 px-3 text-xs hover:bg-slate-800"
+            onClick={() => removeListItem("timeTypes", it.id)}
+            title="Удалить тип"
+          >
+            Удалить
+          </button>
+        </div>
+      ))}
+    </div>
+  </div>
+</details>
 
       {/* Таблица таймшита */}
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
