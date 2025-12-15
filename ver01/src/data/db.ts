@@ -133,6 +133,28 @@ export function weekDays(weekStart: string): string[] {
   return Array.from({ length: 7 }, (_, i) => ymdAddDays(weekStart, i));
 }
 
+// --------- helpers (kind/sink invariants) ---------
+
+function isKind(x: any): x is TimeLogKind {
+  return x === "useful" || x === "sink" || x === "rest";
+}
+
+function inferKindFromTimeTypeId(timeTypeId: ID | null): TimeLogKind {
+  if (!timeTypeId) return "useful";
+  if (timeTypeId === "tt_sink") return "sink";
+  if (timeTypeId === "tt_rest" || timeTypeId === "tt_sleep") return "rest";
+  return "useful";
+}
+
+function normalizeKind(kind: any, timeTypeId: ID | null): TimeLogKind {
+  return isKind(kind) ? kind : inferKindFromTimeTypeId(timeTypeId);
+}
+
+function normalizeSinkId(kind: TimeLogKind, sinkId: any): ID | null {
+  if (kind !== "sink") return null;
+  return sinkId === null || typeof sinkId === "string" ? sinkId : null;
+}
+
 const DEFAULT_STATE: AppState = {
   version: 1,
   tasks: [],
@@ -165,6 +187,18 @@ const DEFAULT_STATE: AppState = {
   activeTimer: null,
 };
 
+function normalizeActiveTimer(a: any): AppState["activeTimer"] {
+  if (!a) return null;
+  const taskId = a.taskId === null || typeof a.taskId === "string" ? a.taskId : null;
+  const timeTypeId = a.timeTypeId === null || typeof a.timeTypeId === "string" ? a.timeTypeId : null;
+  const startedAt = typeof a.startedAt === "number" ? a.startedAt : now();
+
+  const kind = normalizeKind(a.kind, timeTypeId);
+  const sinkId = normalizeSinkId(kind, a.sinkId);
+
+  return { taskId, timeTypeId, startedAt, kind, sinkId };
+}
+
 function loadState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -185,7 +219,7 @@ function loadState(): AppState {
       reviews: Array.isArray((parsed as any).reviews)
         ? ((parsed as any).reviews as any)
         : DEFAULT_STATE.reviews,
-      activeTimer: ((parsed as any).activeTimer as any) ?? DEFAULT_STATE.activeTimer,
+      activeTimer: normalizeActiveTimer((parsed as any).activeTimer),
     };
 
     return merged;
@@ -251,19 +285,16 @@ function normalizeTimeLog(l: any): TimeLog {
       ? l.minutes
       : Math.max(1, Math.round((endedAt - startedAt) / 60000));
 
-  const kindRaw = l.kind;
-  const kind: TimeLogKind | undefined =
-    kindRaw === "useful" || kindRaw === "sink" || kindRaw === "rest"
-      ? kindRaw
-      : undefined;
+  const taskId = l.taskId === null || typeof l.taskId === "string" ? l.taskId : null;
+  const timeTypeId = l.timeTypeId ? String(l.timeTypeId) : null;
 
-  const sinkId =
-    l.sinkId === null || typeof l.sinkId === "string" ? l.sinkId : undefined;
+  const kind = normalizeKind(l.kind, timeTypeId);
+  const sinkId = normalizeSinkId(kind, l.sinkId);
 
   return {
     id: String(l.id ?? uid()),
-    taskId: l.taskId === null || typeof l.taskId === "string" ? l.taskId : null,
-    timeTypeId: l.timeTypeId ? String(l.timeTypeId) : null,
+    taskId,
+    timeTypeId,
     startedAt,
     endedAt,
     minutes,
@@ -334,9 +365,12 @@ export function startTimer(
   kind: TimeLogKind = "useful",
   sinkId: ID | null = null
 ) {
+  const k = normalizeKind(kind, timeTypeId);
+  const sid = normalizeSinkId(k, sinkId);
+
   setState((s) => ({
     ...s,
-    activeTimer: { taskId, timeTypeId, startedAt: now(), kind, sinkId },
+    activeTimer: { taskId, timeTypeId, startedAt: now(), kind: k, sinkId: sid },
   }));
 }
 
@@ -347,6 +381,9 @@ export function stopTimer(note: string = "") {
   const endedAt = now();
   const minutes = Math.max(1, Math.round((endedAt - active.startedAt) / 60000));
 
+  const k = normalizeKind(active.kind, active.timeTypeId ?? null);
+  const sid = normalizeSinkId(k, active.sinkId);
+
   const log: TimeLog = {
     id: uid(),
     taskId: active.taskId,
@@ -355,8 +392,8 @@ export function stopTimer(note: string = "") {
     endedAt,
     minutes,
     note: String(note ?? ""),
-    kind: active.kind,
-    sinkId: active.sinkId ?? null,
+    kind: k,
+    sinkId: sid,
   };
 
   setState((s) => ({
@@ -382,16 +419,20 @@ export function addTimeLogManual(input: AddTimeLogInput): ID {
   const safeEnd = typeof input.endedAt === "number" ? input.endedAt : safeStart;
   const minutes = Math.max(1, Math.round((safeEnd - safeStart) / 60000));
 
+  const timeTypeId = input.timeTypeId ?? null;
+  const k = normalizeKind(input.kind, timeTypeId);
+  const sid = normalizeSinkId(k, input.sinkId);
+
   const log: TimeLog = {
     id: uid(),
     taskId: input.taskId ?? null,
-    timeTypeId: input.timeTypeId ?? null,
+    timeTypeId,
     startedAt: safeStart,
     endedAt: safeEnd,
     minutes,
     note: String(input.note ?? ""),
-    kind: input.kind,
-    sinkId: input.sinkId ?? null,
+    kind: k,
+    sinkId: sid,
   };
 
   setState((s) => ({
@@ -408,7 +449,9 @@ export function deleteTimeLog(id: ID) {
 
 export function updateTimeLog(
   id: ID,
-  patch: Partial<Pick<TimeLog, "taskId" | "timeTypeId" | "startedAt" | "endedAt" | "note" | "kind" | "sinkId">>
+  patch: Partial<
+    Pick<TimeLog, "taskId" | "timeTypeId" | "startedAt" | "endedAt" | "note" | "kind" | "sinkId">
+  >
 ) {
   setState((s) => ({
     ...s,
@@ -419,12 +462,30 @@ export function updateTimeLog(
       const endedAt = typeof patch.endedAt === "number" ? patch.endedAt : l.endedAt;
       const minutes = Math.max(1, Math.round((endedAt - startedAt) / 60000));
 
+      const nextTimeTypeId =
+        patch.timeTypeId === undefined ? l.timeTypeId : (patch.timeTypeId ?? null);
+
+      const nextKind = normalizeKind(
+        patch.kind === undefined ? l.kind : patch.kind,
+        nextTimeTypeId
+      );
+
+      // sinkId: если patch не прислали — сохраняем старое; если прислали null — обнуляем; и всегда null если kind != sink
+      const prevSink = l.sinkId ?? null;
+      const rawSink =
+        patch.sinkId === undefined ? prevSink : (patch.sinkId ?? null);
+
+      const nextSinkId = normalizeSinkId(nextKind, rawSink);
+
       return {
         ...l,
         ...patch,
+        timeTypeId: nextTimeTypeId,
         startedAt,
         endedAt,
         minutes,
+        kind: nextKind,
+        sinkId: nextSinkId,
       };
     }),
   }));
@@ -517,7 +578,7 @@ export function importBackupJson(jsonText: string) {
     tasks: Array.isArray((parsed as any).tasks) ? (parsed as any).tasks.map(normalizeTask) : [],
     timeLogs: Array.isArray((parsed as any).timeLogs) ? (parsed as any).timeLogs.map(normalizeTimeLog) : [],
     reviews: Array.isArray((parsed as any).reviews) ? (parsed as any).reviews : [],
-    activeTimer: (parsed as any).activeTimer ?? null,
+    activeTimer: normalizeActiveTimer((parsed as any).activeTimer),
   };
 
   STATE = normalized;
