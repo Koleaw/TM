@@ -7,7 +7,14 @@ import {
   useAppState
 } from "../data/db";
 
-type Key = "goals" | "projects" | "contexts" | "roles" | "motivationModes" | "sinks";
+type Key =
+  | "goals"
+  | "projects"
+  | "contexts"
+  | "roles"
+  | "motivationModes"
+  | "sinks"
+  | "timeTypes";
 
 function Section({ title, k }: { title: string; k: Key }) {
   const s = useAppState();
@@ -30,6 +37,7 @@ function Section({ title, k }: { title: string; k: Key }) {
             addListItem(k, name);
             setName("");
           }}
+          disabled={!name.trim()}
         >
           Add
         </button>
@@ -67,7 +75,9 @@ export default function ManagePage() {
     <div className="grid gap-3">
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
         <div className="text-lg font-semibold">Manage</div>
-        <div className="text-sm text-slate-400 mt-1">Цели/проекты/контексты/поглотители/режимы</div>
+        <div className="text-sm text-slate-400 mt-1">
+          Справочники: цели/проекты/контексты/типы времени/поглотители/режимы
+        </div>
       </div>
 
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
@@ -85,6 +95,7 @@ export default function ManagePage() {
               addTagToLibrary(tag);
               setTag("");
             }}
+            disabled={!tag.trim()}
           >
             Add
           </button>
@@ -95,12 +106,14 @@ export default function ManagePage() {
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
+        <Section title="Time types (типы времени)" k="timeTypes" />
+        <Section title="Sinks (поглотители)" k="sinks" />
+
         <Section title="Goals" k="goals" />
         <Section title="Projects" k="projects" />
         <Section title="Contexts" k="contexts" />
         <Section title="Roles" k="roles" />
         <Section title="Motivation modes" k="motivationModes" />
-        <Section title="Sinks (поглотители)" k="sinks" />
       </div>
     </div>
   );
