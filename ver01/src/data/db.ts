@@ -27,6 +27,7 @@ export type TimeLogKind = "useful" | "sink" | "rest";
 export type TimeLog = {
   id: ID;
   taskId: ID | null;
+  timeTypeId: ID | null; // <-- тип времени
   startedAt: number; // epoch ms
   endedAt: number;   // epoch ms
   minutes: number;
@@ -79,7 +80,7 @@ export type AppState = {
   lists: ListsState;
   reviews: ReviewEntry[];
   settings: Settings;
-  activeTimer: { taskId: ID | null; startedAt: number; kind?: TimeLogKind; sinkId?: ID | null } | null;
+  activeTimer: { taskId: ID | null; timeTypeId: ID | null; startedAt: number; kind?: TimeLogKind; sinkId?: ID | null } | null;
 };
 
 function uid(): ID {
@@ -187,6 +188,7 @@ function normalizeTimeLog(l: any): TimeLog {
   return {
     id: String(l.id ?? uid()),
     taskId: (l.taskId === null || typeof l.taskId === "string") ? l.taskId : null,
+    timeTypeId: l?.timeTypeId ? String(l.timeTypeId) : null,
     startedAt,
     endedAt,
     minutes,
@@ -306,10 +308,10 @@ export function deleteTask(id: ID) {
 
 // ---------------- Timer / logs ----------------
 
-export function startTimer(taskId: ID | null, kind: TimeLogKind = "useful", sinkId: ID | null = null) {
+export function startTimer(taskId: ID | null, timeTypeId: ID | null, kind: TimeLogKind = "useful", sinkId: ID | null = null) {
   setState((s) => ({
     ...s,
-    activeTimer: { taskId, startedAt: now(), kind, sinkId }
+    activeTimer: { taskId, timeTypeId, startedAt: now(), kind, sinkId }
   }));
 }
 
@@ -323,6 +325,7 @@ export function stopTimer(note: string = "", kind?: TimeLogKind, sinkId?: ID | n
   const log: TimeLog = {
     id: uid(),
     taskId: active.taskId,
+    timeTypeId: active.timeTypeId ?? null,
     startedAt: active.startedAt,
     endedAt,
     minutes,
@@ -370,33 +373,25 @@ export function addTimeLog(input: {
   }));
 }
 
-export function addTimeLogManual(input: {
-  taskId: ID | null;
-  startedAt: number;
-  endedAt: number;
-  note?: string;
-  [key: string]: any; // чтобы не ломалось, если TimePage передаёт доп.поля
-}) {
-  let startedAt = Number(input.startedAt);
-  let endedAt = Number(input.endedAt);
+export function addTimeLogManual(
+  taskId: ID | null,
+  startedAt: number,
+  endedAt: number,
+  note: string,
+  timeTypeId: ID | null = null
+) {
+  const safeStart = typeof startedAt === "number" ? startedAt : now();
+  const safeEnd = typeof endedAt === "number" ? endedAt : safeStart;
+  const minutes = Math.max(1, Math.round((safeEnd - safeStart) / 60000));
 
-  // защита от перепутанных дат
-  if (endedAt < startedAt) {
-    const tmp = startedAt;
-    startedAt = endedAt;
-    endedAt = tmp;
-  }
-
-  const minutes = Math.max(1, Math.round((endedAt - startedAt) / 60000));
-
-  const log = {
-    ...input,
+  const log: TimeLog = {
     id: uid(),
-    taskId: input.taskId ?? null,
-    startedAt,
-    endedAt,
+    taskId,
+    timeTypeId,
+    startedAt: safeStart,
+    endedAt: safeEnd,
     minutes,
-    note: input.note ?? ""
+    note: note ?? ""
   };
 
   setState((s) => ({
@@ -404,7 +399,7 @@ export function addTimeLogManual(input: {
     timeLogs: [log, ...s.timeLogs]
   }));
 
-  return log.id as ID;
+  return log.id;
 }
 
 export function deleteTimeLog(id: ID) {
@@ -413,7 +408,7 @@ export function deleteTimeLog(id: ID) {
 
 export function updateTimeLog(
   id: ID,
-  patch: Partial<Pick<TimeLog, "taskId" | "startedAt" | "endedAt" | "note">>
+  patch: Partial<Pick<TimeLog, "taskId" | "timeTypeId" | "startedAt" | "endedAt" | "note">>
 ) {
   setState((s) => ({
     ...s,
@@ -569,10 +564,11 @@ export function tasksToCsv(tasks: Task[]) {
 }
 
 export function timeLogsToCsv(logs: TimeLog[]) {
-  const header = ["id", "taskId", "minutes", "startedAt", "endedAt", "kind", "sinkId", "note"];
+  const header = ["id", "taskId", "timeTypeId", "minutes", "startedAt", "endedAt", "kind", "sinkId", "note"];
   const rows = logs.map((l) => [
     l.id,
     l.taskId ?? "",
+    l.timeTypeId ?? "",
     l.minutes,
     new Date(l.startedAt).toISOString(),
     new Date(l.endedAt).toISOString(),
