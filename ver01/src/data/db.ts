@@ -30,6 +30,7 @@ export type TimeLog = {
   startedAt: number; // epoch ms
   endedAt: number;   // epoch ms
   minutes: number;
+  kind: string;
   note: string;
 
   /**
@@ -47,7 +48,7 @@ export type TimeLog = {
   sinkId?: ID | null;
 };
 
-export type ListKey = "goals" | "projects" | "contexts" | "roles" | "motivationModes" | "sinks";
+export type ListKey = "goals" | "projects" | "contexts" | "roles" | "motivationModes" | "sinks" | "timeTypes";
 export type ListItem = { id: ID; name: string };
 
 export type ListsState = Record<ListKey, ListItem[]>;
@@ -68,6 +69,7 @@ export type Settings = {
   dayStartHour: number; // 0-23
   dayEndHour: number;   // 0-23
   tagLibrary: string[];
+  timeTypes: string[];
 };
 
 export type AppState = {
@@ -130,7 +132,17 @@ const DEFAULT_STATE: AppState = {
     contexts: [],
     roles: [],
     motivationModes: [],
-    sinks: []
+    sinks: [],
+    timeTypes: [
+      { id: "tt_focus", name: "Фокус" },
+      { id: "tt_routine", name: "Рутина/админка" },
+      { id: "tt_comm", name: "Коммуникации" },
+      { id: "tt_road", name: "Дорога" },
+      { id: "tt_life", name: "Быт" },
+      { id: "tt_rest", name: "Восстановление/отдых" },
+      { id: "tt_sleep", name: "Сон" },
+      { id: "tt_sink", name: "Поглотитель" },
+    ],
   },
   reviews: [],
   settings: {
