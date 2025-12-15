@@ -6,10 +6,8 @@ import {
   stopTimer,
   updateTimeLog,
   useAppState,
-  addListItem,
-  renameListItem,
-  removeListItem,
 } from "../data/db";
+import type { TimeLogKind } from "../data/db";
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
@@ -38,6 +36,20 @@ function fmtDuration(mins: number) {
   return `${h} ч ${m} мин`;
 }
 
+function kindLabel(k?: TimeLogKind) {
+  const kk: TimeLogKind = k === "sink" || k === "rest" ? k : "useful";
+  if (kk === "useful") return "Полезное";
+  if (kk === "rest") return "Отдых";
+  return "Поглотитель";
+}
+
+function inferKindFromTimeTypeId(timeTypeId: string | null): TimeLogKind {
+  if (!timeTypeId) return "useful";
+  if (timeTypeId === "tt_sink") return "sink";
+  if (timeTypeId === "tt_rest" || timeTypeId === "tt_sleep") return "rest";
+  return "useful";
+}
+
 export default function TimePage() {
   const s = useAppState();
 
@@ -53,6 +65,7 @@ export default function TimePage() {
   }, [s.tasks]);
 
   const timeTypes = useMemo(() => s.lists.timeTypes ?? [], [s.lists.timeTypes]);
+  const sinks = useMemo(() => s.lists.sinks ?? [], [s.lists.sinks]);
 
   const timeTypeNameById = useMemo(() => {
     const map = new Map<string, string>();
@@ -60,27 +73,20 @@ export default function TimePage() {
     return map;
   }, [timeTypes]);
 
-  // ---- справочник типов времени (CRUD) ----
-  const [newTimeTypeName, setNewTimeTypeName] = useState<string>("");
-
-  function addTimeType() {
-    const name = newTimeTypeName.trim();
-    if (!name) return;
-
-    const exists = timeTypes.some((x) => x.name.trim().toLowerCase() === name.toLowerCase());
-    if (exists) {
-      setNewTimeTypeName("");
-      return;
-    }
-
-    addListItem("timeTypes", name);
-    setNewTimeTypeName("");
-  }
+  const sinkNameById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const it of sinks) map.set(it.id, it.name);
+    return map;
+  }, [sinks]);
 
   // ---- таймер ----
   const active = s.activeTimer;
   const [timerTaskId, setTimerTaskId] = useState<string>("");
   const [timerTimeTypeId, setTimerTimeTypeId] = useState<string>("");
+
+  const [timerKind, setTimerKind] = useState<TimeLogKind>("useful");
+  const [timerSinkId, setTimerSinkId] = useState<string>("");
+
   const [timerNote, setTimerNote] = useState<string>("");
 
   const elapsedMin = useMemo(() => {
@@ -96,6 +102,10 @@ export default function TimePage() {
 
   const [manualTaskId, setManualTaskId] = useState<string>("");
   const [manualTimeTypeId, setManualTimeTypeId] = useState<string>("");
+
+  const [manualKind, setManualKind] = useState<TimeLogKind>("useful");
+  const [manualSinkId, setManualSinkId] = useState<string>("");
+
   const [manualStart, setManualStart] = useState<string>(defaultStart);
   const [manualEnd, setManualEnd] = useState<string>(defaultEnd);
   const [manualNote, setManualNote] = useState<string>("");
@@ -114,6 +124,10 @@ export default function TimePage() {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editTaskId, setEditTaskId] = useState<string>("");
   const [editTimeTypeId, setEditTimeTypeId] = useState<string>("");
+
+  const [editKind, setEditKind] = useState<TimeLogKind>("useful");
+  const [editSinkId, setEditSinkId] = useState<string>("");
+
   const [editStart, setEditStart] = useState<string>("");
   const [editEnd, setEditEnd] = useState<string>("");
   const [editNote, setEditNote] = useState<string>("");
@@ -121,9 +135,19 @@ export default function TimePage() {
   function beginEdit(logId: string) {
     const l = s.timeLogs.find((x) => x.id === logId);
     if (!l) return;
+
     setEditingId(l.id);
     setEditTaskId(l.taskId ?? "");
     setEditTimeTypeId(l.timeTypeId ?? "");
+
+    const k: TimeLogKind =
+      l.kind === "sink" || l.kind === "rest" || l.kind === "useful"
+        ? l.kind
+        : inferKindFromTimeTypeId(l.timeTypeId ?? null);
+
+    setEditKind(k);
+    setEditSinkId(l.sinkId ?? "");
+
     setEditStart(toLocalDateTimeInput(l.startedAt));
     setEditEnd(toLocalDateTimeInput(l.endedAt));
     setEditNote(l.note ?? "");
@@ -141,6 +165,8 @@ export default function TimePage() {
       startedAt,
       endedAt,
       note: editNote ?? "",
+      kind: editKind,
+      sinkId: editKind === "sink" ? (editSinkId ? editSinkId : null) : null,
     });
 
     setEditingId(null);
@@ -154,6 +180,11 @@ export default function TimePage() {
       arr.push(l);
       groups.set(key, arr);
     }
+
+    for (const [, arr] of groups) {
+      arr.sort((a, b) => (b.startedAt ?? 0) - (a.startedAt ?? 0));
+    }
+
     const entries = Array.from(groups.entries()).sort((a, b) => {
       const a0 = a[1][0]?.startedAt ?? 0;
       const b0 = b[1][0]?.startedAt ?? 0;
@@ -164,7 +195,6 @@ export default function TimePage() {
 
   return (
     <div className="grid gap-3">
-     
       {/* Таймер */}
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
         <div className="text-lg font-semibold">Таймер</div>
@@ -187,27 +217,85 @@ export default function TimePage() {
             </select>
           </div>
 
-          <div className="grid gap-1">
-            <div className="text-xs text-slate-400">Тип времени</div>
-            <select
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              value={timerTimeTypeId}
-              onChange={(e) => setTimerTimeTypeId(e.target.value)}
-              disabled={!!active}
-            >
-              <option value="">(не выбран)</option>
-              {timeTypes.map((it) => (
-                <option key={it.id} value={it.id}>
-                  {it.name}
-                </option>
-              ))}
-            </select>
+          <div className="grid gap-2">
+            <div className="grid gap-1">
+              <div className="text-xs text-slate-400">Тип времени</div>
+              <select
+                className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                value={timerTimeTypeId}
+                onChange={(e) => {
+                  const next = e.target.value;
+                  setTimerTimeTypeId(next);
+
+                  const inferred = inferKindFromTimeTypeId(next || null);
+                  setTimerKind(inferred);
+                  if (inferred !== "sink") setTimerSinkId("");
+                }}
+                disabled={!!active}
+              >
+                <option value="">(не выбран)</option>
+                {timeTypes.map((it) => (
+                  <option key={it.id} value={it.id}>
+                    {it.name}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            <div className="grid gap-1">
+              <div className="text-xs text-slate-400">Класс (для честной аналитики)</div>
+              <select
+                className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                value={timerKind}
+                onChange={(e) => {
+                  const k = e.target.value as TimeLogKind;
+                  setTimerKind(k);
+                  if (k !== "sink") setTimerSinkId("");
+                }}
+                disabled={!!active}
+              >
+                <option value="useful">Полезное</option>
+                <option value="rest">Отдых</option>
+                <option value="sink">Поглотитель</option>
+              </select>
+            </div>
+
+            {timerKind === "sink" ? (
+              <div className="grid gap-1">
+                <div className="text-xs text-slate-400">Какой поглотитель</div>
+                <select
+                  className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                  value={timerSinkId}
+                  onChange={(e) => setTimerSinkId(e.target.value)}
+                  disabled={!!active}
+                >
+                  <option value="">(не выбран)</option>
+                  {sinks.map((it) => (
+                    <option key={it.id} value={it.id}>
+                      {it.name}
+                    </option>
+                  ))}
+                </select>
+                {sinks.length === 0 ? (
+                  <div className="text-xs text-slate-500">
+                    Список пуст — добавь “Поглотители” в Manage.
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
           </div>
 
           {!active ? (
             <button
               className="rounded-lg bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950"
-              onClick={() => startTimer(timerTaskId || null, timerTimeTypeId || null)}
+              onClick={() =>
+                startTimer(
+                  timerTaskId || null,
+                  timerTimeTypeId || null,
+                  timerKind,
+                  timerKind === "sink" ? (timerSinkId || null) : null
+                )
+              }
             >
               Старт
             </button>
@@ -267,7 +355,14 @@ export default function TimePage() {
             <select
               className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
               value={manualTimeTypeId}
-              onChange={(e) => setManualTimeTypeId(e.target.value)}
+              onChange={(e) => {
+                const next = e.target.value;
+                setManualTimeTypeId(next);
+
+                const inferred = inferKindFromTimeTypeId(next || null);
+                setManualKind(inferred);
+                if (inferred !== "sink") setManualSinkId("");
+              }}
             >
               <option value="">(не выбран)</option>
               {timeTypes.map((it) => (
@@ -277,6 +372,46 @@ export default function TimePage() {
               ))}
             </select>
           </div>
+
+          <div className="grid gap-1">
+            <div className="text-xs text-slate-400">Класс</div>
+            <select
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={manualKind}
+              onChange={(e) => {
+                const k = e.target.value as TimeLogKind;
+                setManualKind(k);
+                if (k !== "sink") setManualSinkId("");
+              }}
+            >
+              <option value="useful">Полезное</option>
+              <option value="rest">Отдых</option>
+              <option value="sink">Поглотитель</option>
+            </select>
+          </div>
+
+          {manualKind === "sink" ? (
+            <div className="grid gap-1">
+              <div className="text-xs text-slate-400">Поглотитель</div>
+              <select
+                className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+                value={manualSinkId}
+                onChange={(e) => setManualSinkId(e.target.value)}
+              >
+                <option value="">(не выбран)</option>
+                {sinks.map((it) => (
+                  <option key={it.id} value={it.id}>
+                    {it.name}
+                  </option>
+                ))}
+              </select>
+              {sinks.length === 0 ? (
+                <div className="text-xs text-slate-500">
+                  Список пуст — добавь “Поглотители” в Manage.
+                </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="grid gap-1">
             <div className="text-xs text-slate-400">Комментарий</div>
@@ -330,6 +465,8 @@ export default function TimePage() {
                 startedAt: manualStartMs,
                 endedAt: manualEndMs,
                 note: manualNote ?? "",
+                kind: manualKind,
+                sinkId: manualKind === "sink" ? (manualSinkId ? manualSinkId : null) : null,
               });
               setManualNote("");
             }}
@@ -338,66 +475,6 @@ export default function TimePage() {
           </button>
         </div>
       </div>
-{/* Типы времени (редко) */}
-<details className="rounded-xl border border-slate-800 bg-slate-950 p-3">
-  <summary className="cursor-pointer text-lg font-semibold text-slate-200">
-    Типы времени <span className="text-sm font-normal text-slate-500">({timeTypes.length})</span>
-  </summary>
-
-  <div className="mt-2 text-sm text-slate-500">
-    Это справочник для выпадашки. Обычно трогаешь редко.
-  </div>
-
-  <div className="mt-3 grid gap-2">
-    <div className="flex flex-wrap gap-2">
-      <input
-        className="h-9 min-w-[240px] flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
-        value={newTimeTypeName}
-        onChange={(e) => setNewTimeTypeName(e.target.value)}
-        placeholder='Новый тип, например "Работа"'
-        onKeyDown={(e) => {
-          if (e.key === "Enter") addTimeType();
-        }}
-      />
-      <button
-        className="h-9 rounded-lg bg-slate-200 px-4 text-sm font-semibold text-slate-950 disabled:opacity-40"
-        disabled={!newTimeTypeName.trim()}
-        onClick={addTimeType}
-      >
-        Добавить
-      </button>
-    </div>
-
-    <div className="grid gap-2 md:grid-cols-2">
-      {timeTypes.map((it) => (
-        <div
-          key={it.id}
-          className="flex items-center gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2"
-        >
-          <input
-            className="h-8 flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm text-slate-200"
-            defaultValue={it.name}
-            onBlur={(e) => {
-              const v = e.target.value.trim();
-              if (!v) return;
-              if (v !== it.name) renameListItem("timeTypes", it.id, v);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-            }}
-          />
-          <button
-            className="h-8 rounded-lg border border-slate-800 bg-slate-950 px-3 text-xs hover:bg-slate-800"
-            onClick={() => removeListItem("timeTypes", it.id)}
-            title="Удалить тип"
-          >
-            Удалить
-          </button>
-        </div>
-      ))}
-    </div>
-  </div>
-</details>
 
       {/* Таблица таймшита */}
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
@@ -412,13 +489,15 @@ export default function TimePage() {
                 <div className="text-sm font-semibold text-slate-200">{day}</div>
 
                 <div className="overflow-x-auto rounded-lg border border-slate-800">
-                  <table className="min-w-[900px] w-full text-sm">
+                  <table className="min-w-[1180px] w-full text-sm">
                     <thead className="bg-slate-950">
                       <tr className="text-left text-slate-400">
                         <th className="p-2">Начало</th>
                         <th className="p-2">Окончание</th>
                         <th className="p-2">Интервал</th>
                         <th className="p-2">Тип</th>
+                        <th className="p-2">Класс</th>
+                        <th className="p-2">Поглотитель</th>
                         <th className="p-2">Задача</th>
                         <th className="p-2">Комментарий</th>
                         <th className="p-2 w-[170px]">Действия</th>
@@ -428,8 +507,22 @@ export default function TimePage() {
                       {logs.map((l) => {
                         const start = new Date(l.startedAt);
                         const end = new Date(l.endedAt);
+
                         const taskTitle = l.taskId ? taskTitleById.get(l.taskId) ?? "—" : "—";
-                        const typeTitle = l.timeTypeId ? (timeTypeNameById.get(l.timeTypeId) ?? "тип удалён") : "—";
+                        const typeTitle = l.timeTypeId
+                          ? timeTypeNameById.get(l.timeTypeId) ?? "тип удалён"
+                          : "—";
+
+                        const kk: TimeLogKind =
+                          l.kind === "sink" || l.kind === "rest" || l.kind === "useful"
+                            ? l.kind
+                            : inferKindFromTimeTypeId(l.timeTypeId ?? null);
+
+                        const sinkTitle =
+                          kk === "sink"
+                            ? (l.sinkId ? (sinkNameById.get(l.sinkId) ?? "поглотитель удалён") : "(не выбран)")
+                            : "—";
+
                         const isEditing = editingId === l.id;
 
                         return (
@@ -444,6 +537,8 @@ export default function TimePage() {
                                 </td>
                                 <td className="p-2 text-slate-200">{fmtDuration(l.minutes)}</td>
                                 <td className="p-2 text-slate-200">{typeTitle}</td>
+                                <td className="p-2 text-slate-200">{kindLabel(kk)}</td>
+                                <td className="p-2 text-slate-200">{sinkTitle}</td>
                                 <td className="p-2 text-slate-200">{taskTitle}</td>
                                 <td className="p-2 text-slate-200">{l.note || ""}</td>
                                 <td className="p-2">
@@ -495,7 +590,14 @@ export default function TimePage() {
                                   <select
                                     className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-xs"
                                     value={editTimeTypeId}
-                                    onChange={(e) => setEditTimeTypeId(e.target.value)}
+                                    onChange={(e) => {
+                                      const next = e.target.value;
+                                      setEditTimeTypeId(next);
+
+                                      const inferred = inferKindFromTimeTypeId(next || null);
+                                      setEditKind(inferred);
+                                      if (inferred !== "sink") setEditSinkId("");
+                                    }}
                                   >
                                     <option value="">(не выбран)</option>
                                     {timeTypes.map((it) => (
@@ -504,6 +606,41 @@ export default function TimePage() {
                                       </option>
                                     ))}
                                   </select>
+                                </td>
+
+                                <td className="p-2">
+                                  <select
+                                    className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-xs"
+                                    value={editKind}
+                                    onChange={(e) => {
+                                      const k = e.target.value as TimeLogKind;
+                                      setEditKind(k);
+                                      if (k !== "sink") setEditSinkId("");
+                                    }}
+                                  >
+                                    <option value="useful">Полезное</option>
+                                    <option value="rest">Отдых</option>
+                                    <option value="sink">Поглотитель</option>
+                                  </select>
+                                </td>
+
+                                <td className="p-2">
+                                  {editKind === "sink" ? (
+                                    <select
+                                      className="w-full rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-xs"
+                                      value={editSinkId}
+                                      onChange={(e) => setEditSinkId(e.target.value)}
+                                    >
+                                      <option value="">(не выбран)</option>
+                                      {sinks.map((it) => (
+                                        <option key={it.id} value={it.id}>
+                                          {it.name}
+                                        </option>
+                                      ))}
+                                    </select>
+                                  ) : (
+                                    <div className="text-xs text-slate-500">—</div>
+                                  )}
                                 </td>
 
                                 <td className="p-2">
