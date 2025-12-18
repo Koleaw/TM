@@ -1,517 +1,838 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
+  Task,
+  TimeLogKind,
   createTask,
+  deleteTask,
+  moveTask,
   startTimer,
   stopTimer,
   todayYMD,
+  toggleDone,
   updateTask,
   useAppState,
-  type ID,
-  type TimeLogKind,
+  ymdAddDays,
 } from "../data/db";
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 
-function fmtHM(ms: number) {
+function toLocalDateTimeInput(ms: number) {
   const d = new Date(ms);
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  const y = d.getFullYear();
+  const m = pad2(d.getMonth() + 1);
+  const day = pad2(d.getDate());
+  const hh = pad2(d.getHours());
+  const mm = pad2(d.getMinutes());
+  return `${y}-${m}-${day}T${hh}:${mm}`;
+}
+
+function parseLocalDateTimeInput(v: string) {
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) ? t : NaN;
 }
 
 function fmtDuration(mins: number) {
-  const m = Math.max(0, Math.round(mins));
-  const h = Math.floor(m / 60);
-  const r = m % 60;
-  if (h <= 0) return `${r} мин`;
-  if (r === 0) return `${h} ч`;
-  return `${h} ч ${r} мин`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h <= 0) return `${m} мин`;
+  if (m === 0) return `${h} ч`;
+  return `${h} ч ${m} мин`;
 }
 
-function kindLabel(k?: TimeLogKind) {
-  if (k === "sink") return "Поглотитель";
-  if (k === "rest") return "Восстановление";
-  return "Полезное";
+function parseHHMMToMinutes(v: string | null) {
+  if (!v) return Number.POSITIVE_INFINITY;
+  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(v);
+  if (!m) return Number.POSITIVE_INFINITY;
+  return Number(m[1]) * 60 + Number(m[2]);
 }
 
-const LS_LAST_TASK = "tm.lastTaskId";
-const LS_LAST_PAUSE_KIND = "tm.lastPauseKind";
-const LS_LAST_SINK_ID = "tm.lastSinkId";
-
-function readLS(key: string) {
-  try {
-    return localStorage.getItem(key) ?? "";
-  } catch {
-    return "";
-  }
+function prioLabel(p: 1 | 2 | 3) {
+  if (p === 1) return "Высокий";
+  if (p === 2) return "Средний";
+  return "Низкий";
 }
 
-function writeLS(key: string, value: string) {
-  try {
-    localStorage.setItem(key, value);
-  } catch {}
+function fmtDeadlineCountdown(deadlineAt: number, nowMs: number) {
+  const diff = deadlineAt - nowMs;
+  const sign = diff < 0 ? -1 : 1;
+  const abs = Math.abs(diff);
+
+  const totalMin = Math.round(abs / 60000);
+  const d = Math.floor(totalMin / (60 * 24));
+  const h = Math.floor((totalMin - d * 60 * 24) / 60);
+  const m = totalMin - d * 60 * 24 - h * 60;
+
+  const parts: string[] = [];
+  if (d > 0) parts.push(`${d} д`);
+  if (h > 0) parts.push(`${h} ч`);
+  if (d === 0 && h === 0) parts.push(`${m} мин`);
+
+  const s = parts.join(" ");
+  return sign < 0 ? `просрочено на ${s}` : `осталось ${s}`;
+}
+
+function ymdFromMs(ms: number) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
+}
+
+function hhmmFromMs(ms: number) {
+  const d = new Date(ms);
+  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
 }
 
 export default function TodayPage() {
   const s = useAppState();
   const today = todayYMD();
+  const tomorrow = ymdAddDays(today, 1);
 
+  // ---------- Таймер ----------
   const active = s.activeTimer;
 
-  const [note, setNote] = useState("");
-  const [pauseOpen, setPauseOpen] = useState(false);
-  const [switchOpen, setSwitchOpen] = useState(false);
-  const [sinkPickOpen, setSinkPickOpen] = useState(false);
-
-  const pauseRef = useRef<HTMLDivElement | null>(null);
-  const switchRef = useRef<HTMLDivElement | null>(null);
-
-  // outside click close
+  // тикер, чтобы счётчик минут обновлялся (иначе он "замрёт" на 0)
+  const [tick, setTick] = useState(0);
   useEffect(() => {
-    function onDoc(e: MouseEvent) {
-      const t = e.target as Node;
-      if (pauseRef.current && !pauseRef.current.contains(t)) {
-        setPauseOpen(false);
-        setSinkPickOpen(false);
-      }
-      if (switchRef.current && !switchRef.current.contains(t)) setSwitchOpen(false);
-    }
-    document.addEventListener("mousedown", onDoc);
-    return () => document.removeEventListener("mousedown", onDoc);
-  }, []);
+    if (!active) return;
+    const id = window.setInterval(() => setTick((x) => x + 1), 5000);
+    return () => window.clearInterval(id);
+  }, [active?.startedAt]);
 
   const elapsedMin = useMemo(() => {
     if (!active) return 0;
     const diff = Date.now() - active.startedAt;
     return Math.max(0, Math.floor(diff / 60000));
-  }, [active]);
+  }, [active, tick]);
 
-  const tasksToday = useMemo(() => {
+  const timeTypes = useMemo(() => s.lists.timeTypes ?? [], [s.lists.timeTypes]);
+
+  const [timerTimeTypeId, setTimerTimeTypeId] = useState<string>("");
+  const [timerNote, setTimerNote] = useState<string>("");
+
+  // пауза
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const [pauseTimeTypeId, setPauseTimeTypeId] = useState<string>("");
+  const [pauseKind, setPauseKind] = useState<TimeLogKind>("rest");
+  const [pauseSinkId, setPauseSinkId] = useState<string>("");
+
+  // ---------- Задачи ----------
+  const tasksTodayAll = useMemo(
+    () => s.tasks.filter((t) => t.plannedDate === today),
+    [s.tasks, today]
+  );
+
+  const hardTasks = useMemo(
+    () =>
+      tasksTodayAll
+        .filter((t) => t.status === "todo" && t.plannedStart)
+        .sort((a, b) => {
+          const ta = parseHHMMToMinutes(a.plannedStart);
+          const tb = parseHHMMToMinutes(b.plannedStart);
+          if (ta !== tb) return ta - tb;
+          if (a.priority !== b.priority) return a.priority - b.priority;
+          return b.updatedAt - a.updatedAt;
+        }),
+    [tasksTodayAll]
+  );
+
+  const flexTasks = useMemo(
+    () =>
+      tasksTodayAll
+        .filter((t) => t.status === "todo" && !t.plannedStart)
+        .sort((a, b) => {
+          if (a.priority !== b.priority) return a.priority - b.priority;
+          return b.updatedAt - a.updatedAt;
+        }),
+    [tasksTodayAll]
+  );
+
+  const doneToday = useMemo(
+    () => tasksTodayAll.filter((t) => t.status === "done").sort((a, b) => b.updatedAt - a.updatedAt),
+    [tasksTodayAll]
+  );
+
+  const nowMs = Date.now();
+  const deadlineTasks = useMemo(() => {
     return [...s.tasks]
-      .filter((t) => t.plannedDate === today && t.status !== "done")
-      .sort((a, b) => (b.updatedAt - a.updatedAt));
-  }, [s.tasks, today]);
-
-  const hardToday = useMemo(() => {
-    return tasksToday
-      .filter((t) => !!t.plannedStart)
-      .sort((a, b) => String(a.plannedStart).localeCompare(String(b.plannedStart)));
-  }, [tasksToday]);
-
-  const flexToday = useMemo(() => {
-    return tasksToday
-      .filter((t) => !t.plannedStart)
-      .sort((a, b) => (b.updatedAt - a.updatedAt));
-  }, [tasksToday]);
-
-  const taskTitleById = useMemo(() => {
-    const map = new Map<string, string>();
-    for (const t of s.tasks) map.set(t.id, t.title);
-    return map;
+      .filter((t) => t.status === "todo" && t.deadlineAt !== null)
+      .sort((a, b) => (a.deadlineAt ?? 0) - (b.deadlineAt ?? 0))
+      .slice(0, 12);
   }, [s.tasks]);
 
-  const sinks = useMemo(() => s.lists.sinks ?? [], [s.lists.sinks]);
+  // ---------- Добавление ----------
+  const [hardTitle, setHardTitle] = useState("");
+  const [hardTime, setHardTime] = useState("11:00");
+  const [hardEstimate, setHardEstimate] = useState(60);
+  const [hardPriority, setHardPriority] = useState<1 | 2 | 3>(2);
+  const [hardDeadline, setHardDeadline] = useState<string>("");
 
-  function safeStop() {
-    stopTimer(note);
-    setNote("");
+  const [flexTitle, setFlexTitle] = useState("");
+  const [flexEstimate, setFlexEstimate] = useState(60);
+  const [flexPriority, setFlexPriority] = useState<1 | 2 | 3>(2);
+  const [flexDeadline, setFlexDeadline] = useState<string>("");
+
+  function createHardTask() {
+    const title = hardTitle.trim();
+    if (!title) return;
+
+    const deadlineAt = hardDeadline.trim() ? parseLocalDateTimeInput(hardDeadline.trim()) : NaN;
+
+    createTask(title, {
+      plannedDate: today,
+      plannedStart: hardTime,
+      estimateMin: hardEstimate,
+      priority: hardPriority,
+      deadlineAt: Number.isFinite(deadlineAt) ? deadlineAt : null,
+    });
+
+    setHardTitle("");
+    setHardDeadline("");
   }
 
-  function switchToTask(taskId: ID | null) {
-    // if there's an active timer, we close it into a log first
-    if (active) {
-      // remember last real task to enable "resume"
-      if (active.taskId) writeLS(LS_LAST_TASK, active.taskId);
-      stopTimer(note);
-      setNote("");
-    }
-    // start new
-    startTimer(taskId, null, "useful", null);
-    setSwitchOpen(false);
+  function createFlexTask() {
+    const title = flexTitle.trim();
+    if (!title) return;
+
+    const deadlineAt = flexDeadline.trim() ? parseLocalDateTimeInput(flexDeadline.trim()) : NaN;
+
+    createTask(title, {
+      plannedDate: today,
+      plannedStart: null,
+      estimateMin: flexEstimate,
+      priority: flexPriority,
+      deadlineAt: Number.isFinite(deadlineAt) ? deadlineAt : null,
+    });
+
+    setFlexTitle("");
+    setFlexDeadline("");
   }
 
-  function doPause(kind: TimeLogKind, sinkId: ID | null = null) {
-    // remember previous task for resume
-    if (active?.taskId) writeLS(LS_LAST_TASK, active.taskId);
+  // ---------- Редактирование ----------
+  const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+  const [editTitle, setEditTitle] = useState("");
+  const [editPlannedDate, setEditPlannedDate] = useState<string>(today);
+  const [editPlannedStart, setEditPlannedStart] = useState<string>("");
+  const [editEstimate, setEditEstimate] = useState<number>(60);
+  const [editPriority, setEditPriority] = useState<1 | 2 | 3>(2);
+  const [editDeadline, setEditDeadline] = useState<string>("");
+  const [editNotes, setEditNotes] = useState<string>("");
 
-    // persist last choices (so main pause click doesn't require thinking)
-    writeLS(LS_LAST_PAUSE_KIND, kind);
-    if (sinkId) writeLS(LS_LAST_SINK_ID, sinkId);
+  function beginTaskEdit(taskId: string) {
+    const t = s.tasks.find((x) => x.id === taskId);
+    if (!t) return;
 
-    if (active) {
-      stopTimer(note);
-      setNote("");
-    }
-    startTimer(null, null, kind, sinkId);
-    setPauseOpen(false);
-    setSinkPickOpen(false);
-    setSwitchOpen(false);
+    setEditingTaskId(t.id);
+    setEditTitle(t.title ?? "");
+    setEditPlannedDate(t.plannedDate ?? today);
+    setEditPlannedStart(t.plannedStart ?? "");
+    setEditEstimate(typeof t.estimateMin === "number" ? t.estimateMin : 60);
+    setEditPriority(t.priority ?? 2);
+
+    setEditDeadline(t.deadlineAt ? toLocalDateTimeInput(t.deadlineAt) : "");
+    setEditNotes(t.notes ?? "");
   }
 
-  function quickPause() {
-    const k = (readLS(LS_LAST_PAUSE_KIND) as TimeLogKind) || "rest";
-    if (k === "sink") {
-      const sid = readLS(LS_LAST_SINK_ID);
-      doPause("sink", sid ? (sid as ID) : null);
+  function saveTaskEdit() {
+    if (!editingTaskId) return;
+
+    const dl = editDeadline.trim() ? parseLocalDateTimeInput(editDeadline.trim()) : NaN;
+
+    updateTask(editingTaskId, {
+      title: editTitle.trim() || "Без названия",
+      plannedDate: editPlannedDate ? editPlannedDate : null,
+      plannedStart: editPlannedStart.trim() ? editPlannedStart.trim() : null,
+      estimateMin: Number.isFinite(editEstimate) ? editEstimate : null,
+      priority: editPriority,
+      deadlineAt: Number.isFinite(dl) ? dl : null,
+      notes: editNotes ?? "",
+    });
+
+    setEditingTaskId(null);
+  }
+
+  // ---------- Действия таймера ----------
+  function stopCurrent() {
+    if (!active) return;
+    stopTimer(timerNote);
+    setTimerNote("");
+  }
+
+  // Переключение на другую задачу (стрелка)
+  function switchToTask(taskId: string | null) {
+    if (!active) {
+      startTimer(taskId, timerTimeTypeId || null, "useful", null);
       return;
     }
-    doPause(k);
+    if (active.taskId === taskId) return;
+
+    stopTimer(timerNote);
+    setTimerNote("");
+
+    startTimer(taskId, active.timeTypeId ?? null, active.kind ?? "useful", active.sinkId ?? null);
   }
 
-  function resumeLast() {
-    const last = readLS(LS_LAST_TASK);
-    if (!last) return;
-    switchToTask(last as ID);
+  // Пауза = отдельный лог без привязки к задаче
+  function pauseCurrent() {
+    if (!active) return;
+
+    stopTimer(timerNote);
+    setTimerNote("");
+
+    startTimer(null, pauseTimeTypeId || null, pauseKind, pauseKind === "sink" ? (pauseSinkId || null) : null);
+    setPauseOpen(false);
   }
 
-  // quick add (optional but handy)
-  const [newFlex, setNewFlex] = useState("");
-  const [newHard, setNewHard] = useState("");
-  const [newHardTime, setNewHardTime] = useState("11:00");
+  const activeTaskTitle = useMemo(() => {
+    if (!active?.taskId) return "без привязки";
+    const t = s.tasks.find((x) => x.id === active.taskId);
+    return t?.title ?? "(задача удалена)";
+  }, [active?.taskId, s.tasks]);
 
-  function addFlex() {
-    const title = newFlex.trim();
-    if (!title) return;
-    createTask(title, { plannedDate: today, plannedStart: null });
-    setNewFlex("");
+  const timerStatus = active ? `идёт… (${elapsedMin} мин)` : "простой";
+
+  const TaskEditPanel = () => (
+    <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950 p-2">
+      <div className="grid gap-2 md:grid-cols-2">
+        <label className="grid gap-1">
+          <span className="text-xs text-slate-400">Название</span>
+          <input
+            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+            value={editTitle}
+            onChange={(e) => setEditTitle(e.target.value)}
+          />
+        </label>
+
+        <label className="grid gap-1">
+          <span className="text-xs text-slate-400">Приоритет</span>
+          <select
+            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+            value={editPriority}
+            onChange={(e) => setEditPriority(Number(e.target.value) as any)}
+          >
+            <option value={1}>Высокий</option>
+            <option value={2}>Средний</option>
+            <option value={3}>Низкий</option>
+          </select>
+        </label>
+
+        <label className="grid gap-1">
+          <span className="text-xs text-slate-400">Дата (в плане)</span>
+          <input
+            type="date"
+            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+            value={editPlannedDate ?? ""}
+            onChange={(e) => setEditPlannedDate(e.target.value)}
+          />
+        </label>
+
+        <label className="grid gap-1">
+          <span className="text-xs text-slate-400">Время (если жёсткая) HH:MM</span>
+          <input
+            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+            value={editPlannedStart}
+            onChange={(e) => setEditPlannedStart(e.target.value)}
+            placeholder="например 16:00"
+          />
+        </label>
+
+        <label className="grid gap-1">
+          <span className="text-xs text-slate-400">Оценка (мин)</span>
+          <input
+            type="number"
+            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+            value={editEstimate}
+            onChange={(e) => setEditEstimate(Number(e.target.value))}
+            min={0}
+          />
+        </label>
+
+        <label className="grid gap-1">
+          <span className="text-xs text-slate-400">Дедлайн</span>
+          <input
+            type="datetime-local"
+            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+            value={editDeadline}
+            onChange={(e) => setEditDeadline(e.target.value)}
+          />
+        </label>
+
+        <label className="grid gap-1 md:col-span-2">
+          <span className="text-xs text-slate-400">Заметки</span>
+          <textarea
+            className="min-h-[70px] rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+            value={editNotes}
+            onChange={(e) => setEditNotes(e.target.value)}
+          />
+        </label>
+      </div>
+
+      <div className="mt-2 flex items-center justify-end gap-2">
+        <button
+          className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-800"
+          onClick={() => setEditingTaskId(null)}
+        >
+          Отмена
+        </button>
+        <button
+          className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-950"
+          onClick={saveTaskEdit}
+        >
+          Сохранить
+        </button>
+      </div>
+    </div>
+  );
+
+  function TaskRow({ t }: { t: Task }) {
+    const isActive = active?.taskId === t.id;
+
+    const meta = [
+      t.plannedStart ? t.plannedStart : null,
+      typeof t.estimateMin === "number" ? `оценка ${fmtDuration(t.estimateMin)}` : "без оценки",
+      `приоритет: ${prioLabel(t.priority)}`,
+      t.deadlineAt ? `дедлайн: ${ymdFromMs(t.deadlineAt)} ${hhmmFromMs(t.deadlineAt)}` : null,
+    ]
+      .filter(Boolean)
+      .join(" • ");
+
+    return (
+      <div className={`rounded-lg border border-slate-800 bg-slate-900 p-2 ${isActive ? "ring-1 ring-emerald-400" : ""}`}>
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-sm text-slate-200">{t.title}</div>
+            <div className="text-xs text-slate-500">{meta}</div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {!active ? (
+              <button
+                className="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950"
+                onClick={() => startTimer(t.id, timerTimeTypeId || null, "useful", null)}
+              >
+                Старт
+              </button>
+            ) : isActive ? (
+              <button
+                className="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950"
+                onClick={stopCurrent}
+                title="Стоп текущей задачи"
+              >
+                Стоп
+              </button>
+            ) : (
+              <button
+                className="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950"
+                onClick={() => switchToTask(t.id)}
+                title="Переключиться (стрелка)"
+              >
+                →
+              </button>
+            )}
+
+            <button
+              className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+              title="Правка"
+              onClick={() => beginTaskEdit(t.id)}
+            >
+              ✎
+            </button>
+            <button
+              className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+              title="Готово"
+              onClick={() => toggleDone(t.id)}
+            >
+              ✓
+            </button>
+            <button
+              className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+              title="Перенести на завтра"
+              onClick={() => moveTask(t.id, tomorrow, t.plannedStart ?? null)}
+            >
+              ⇢
+            </button>
+            <button
+              className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+              title="Удалить"
+              onClick={() => deleteTask(t.id)}
+            >
+              🗑
+            </button>
+          </div>
+        </div>
+
+        {editingTaskId === t.id ? <TaskEditPanel /> : null}
+      </div>
+    );
   }
-
-  function addHard() {
-    const title = newHard.trim();
-    if (!title) return;
-    const id = createTask(title, { plannedDate: today, plannedStart: newHardTime });
-    // по умолчанию можно сразу считать "жесткой" (plannedStart уже есть)
-    updateTask(id, { plannedStart: newHardTime });
-    setNewHard("");
-  }
-
-  const activeTitle = useMemo(() => {
-    if (!active) return "простой";
-    if (active.taskId) return taskTitleById.get(active.taskId) ?? "задача удалена";
-    return `Пауза • ${kindLabel(active.kind)}`;
-  }, [active, taskTitleById]);
-
-  const isPaused = !!active && !active.taskId;
 
   return (
     <div className="grid gap-3">
-      {/* TIMER (top, main interaction) */}
+      {/* Header + timer */}
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
           <div>
-            <div className="text-lg font-semibold">Сегодня</div>
+            <div className="text-xl font-semibold">Сегодня</div>
             <div className="text-sm text-slate-400">
-              Таймер: <span className="text-slate-200">{activeTitle}</span>
-              {active ? (
-                <span className="ml-2 text-slate-500">
-                  с {fmtHM(active.startedAt)} • {fmtDuration(elapsedMin)}
-                </span>
-              ) : null}
+              Таймер: <span className="text-slate-200">{timerStatus}</span>
+              {active ? <span className="ml-2 text-slate-500">• {activeTaskTitle}</span> : null}
             </div>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            {active ? (
-              <>
-                {/* STOP */}
-                <button
-                  className="h-10 rounded-lg bg-emerald-400 px-4 text-sm font-semibold text-slate-950"
-                  onClick={safeStop}
-                >
-                  Стоп
-                </button>
-
-                {/* PAUSE split */}
-                <div className="relative" ref={pauseRef}>
-                  <div className="inline-flex overflow-hidden rounded-lg border border-slate-800">
-                    <button
-                      className="h-10 bg-slate-950 px-4 text-sm font-semibold text-slate-200 hover:bg-slate-900"
-                      onClick={quickPause}
-                      title="Пауза последним выбранным классом"
-                    >
-                      Пауза
-                    </button>
-                    <button
-                      className="h-10 bg-slate-950 px-3 text-sm text-slate-200 hover:bg-slate-900"
-                      onClick={() => setPauseOpen((v) => !v)}
-                      title="Выбрать класс паузы"
-                    >
-                      ▾
-                    </button>
-                  </div>
-
-                  {pauseOpen ? (
-                    <div className="absolute right-0 z-20 mt-2 w-64 rounded-lg border border-slate-800 bg-slate-950 p-2 shadow">
-                      <button
-                        className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-slate-900"
-                        onClick={() => doPause("useful")}
-                      >
-                        Полезное (меня дернули)
-                      </button>
-                      <button
-                        className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-slate-900"
-                        onClick={() => doPause("rest")}
-                      >
-                        Восстановление (перерыв)
-                      </button>
-                      <button
-                        className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-slate-900"
-                        onClick={() => {
-                          if (sinks.length > 0) setSinkPickOpen((v) => !v);
-                          else doPause("sink", null);
-                        }}
-                      >
-                        Поглотитель {sinks.length > 0 ? " (выбрать…)" : ""}
-                      </button>
-
-                      {sinkPickOpen && sinks.length > 0 ? (
-                        <div className="mt-2 rounded-md border border-slate-800 bg-slate-900 p-2">
-                          <div className="mb-2 text-xs text-slate-400">Какой именно?</div>
-                          <div className="grid gap-1">
-                            {sinks.map((it) => (
-                              <button
-                                key={it.id}
-                                className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-slate-800"
-                                onClick={() => doPause("sink", it.id)}
-                              >
-                                {it.name}
-                              </button>
-                            ))}
-                            <button
-                              className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-slate-800"
-                              onClick={() => doPause("sink", null)}
-                              title="Если не хочешь уточнять"
-                            >
-                              (без уточнения)
-                            </button>
-                          </div>
-                        </div>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </div>
-
-                {/* SWITCH */}
-                <div className="relative" ref={switchRef}>
-                  <button
-                    className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm hover:bg-slate-900"
-                    onClick={() => setSwitchOpen((v) => !v)}
-                    title="Быстро переключиться на другую задачу"
-                  >
-                    ⇄
-                  </button>
-
-                  {switchOpen ? (
-                    <div className="absolute right-0 z-20 mt-2 w-[320px] rounded-lg border border-slate-800 bg-slate-950 p-2 shadow">
-                      <div className="px-2 pb-2 text-xs text-slate-400">Переключиться на:</div>
-
-                      <button
-                        className="mb-1 w-full rounded-md px-3 py-2 text-left text-sm hover:bg-slate-900"
-                        onClick={() => switchToTask(null)}
-                      >
-                        (без привязки)
-                      </button>
-
-                      <div className="grid max-h-[320px] gap-1 overflow-auto pr-1">
-                        {tasksToday.map((t) => (
-                          <button
-                            key={t.id}
-                            className="w-full rounded-md px-3 py-2 text-left text-sm hover:bg-slate-900"
-                            onClick={() => switchToTask(t.id)}
-                          >
-                            {t.title}
-                            {t.plannedStart ? (
-                              <span className="ml-2 text-xs text-slate-500">• {t.plannedStart}</span>
-                            ) : null}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : null}
-                </div>
-              </>
-            ) : (
-              <div className="text-sm text-slate-400">Таймер не запущен — стартуй задачу ниже</div>
-            )}
+          <div className="text-sm text-slate-400">
+            {active ? "Чтобы переключиться — нажми стрелку у нужной задачи ниже" : "Таймер не запущен — стартуй задачу ниже"}
           </div>
         </div>
 
-        {active ? (
-          <div className="mt-3 grid gap-2 md:grid-cols-[1fr,auto] md:items-end">
-            <div className="grid gap-1">
-              <div className="text-xs text-slate-400">
-                Комментарий (добавится при Стоп; можно оставить пустым)
+        <div className="mt-3 grid gap-2 md:grid-cols-[1fr,auto,auto] md:items-end">
+          <div className="grid gap-1">
+            <div className="text-xs text-slate-400">Тип времени (для старта)</div>
+            <select
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={timerTimeTypeId}
+              onChange={(e) => setTimerTimeTypeId(e.target.value)}
+              disabled={!!active}
+            >
+              <option value="">(не выбран)</option>
+              {timeTypes.map((it) => (
+                <option key={it.id} value={it.id}>
+                  {it.name}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {!active ? (
+            <div className="text-sm text-slate-500 md:text-right">Запусти задачу кнопкой “Старт” ниже</div>
+          ) : (
+            <>
+              <button
+                className="rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm hover:bg-slate-800"
+                onClick={() => setPauseOpen((x) => !x)}
+                title="Пауза = отдельный лог в таймшите"
+              >
+                ⏸︎ Пауза
+              </button>
+              <button className="rounded-lg bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950" onClick={stopCurrent}>
+                Стоп
+              </button>
+            </>
+          )}
+        </div>
+
+        {active && (
+          <div className="mt-3 grid gap-1">
+            <div className="text-xs text-slate-400">Комментарий к текущей записи (добавится при “Стоп” или переключении)</div>
+            <input
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={timerNote}
+              onChange={(e) => setTimerNote(e.target.value)}
+              placeholder="Например: правки по чертежу, созвон, дорога…"
+            />
+          </div>
+        )}
+
+        {active && pauseOpen && (
+          <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900 p-3">
+            <div className="text-sm font-semibold">Пауза</div>
+            <div className="mt-2 grid gap-2 md:grid-cols-3">
+              <div className="grid gap-1">
+                <div className="text-xs text-slate-400">Класс</div>
+                <select
+                  className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm"
+                  value={pauseKind}
+                  onChange={(e) => setPauseKind(e.target.value as any)}
+                >
+                  <option value="useful">Полезное</option>
+                  <option value="rest">Отдых</option>
+                  <option value="sink">Поглотитель</option>
+                </select>
               </div>
-              <input
-                className="h-10 rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
-                value={note}
-                onChange={(e) => setNote(e.target.value)}
-                placeholder="Что делал / контекст / результат"
-              />
+
+              <div className="grid gap-1">
+                <div className="text-xs text-slate-400">Тип времени</div>
+                <select
+                  className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm"
+                  value={pauseTimeTypeId}
+                  onChange={(e) => setPauseTimeTypeId(e.target.value)}
+                >
+                  <option value="">(не выбран)</option>
+                  {timeTypes.map((it) => (
+                    <option key={it.id} value={it.id}>
+                      {it.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid gap-1">
+                <div className="text-xs text-slate-400">Поглотитель (если выбран)</div>
+                <select
+                  className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm"
+                  value={pauseSinkId}
+                  onChange={(e) => setPauseSinkId(e.target.value)}
+                  disabled={pauseKind !== "sink"}
+                >
+                  <option value="">(не выбран)</option>
+                  {(s.lists.sinks ?? []).map((it) => (
+                    <option key={it.id} value={it.id}>
+                      {it.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            {isPaused ? (
+            <div className="mt-3 flex items-center justify-end gap-2">
               <button
-                className="h-10 rounded-lg bg-slate-200 px-4 text-sm font-semibold text-slate-950 disabled:opacity-40"
-                onClick={resumeLast}
-                disabled={!readLS(LS_LAST_TASK)}
-                title="Остановит паузу и запустит прошлую задачу"
+                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-800"
+                onClick={() => setPauseOpen(false)}
               >
-                Продолжить прошлую
+                Отмена
               </button>
-            ) : null}
+              <button className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-950" onClick={pauseCurrent}>
+                Поставить паузу
+              </button>
+            </div>
           </div>
-        ) : null}
+        )}
       </div>
 
-      {/* PLAN */}
+      {/* Deadlines */}
+      <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
+        <div className="flex items-center justify-between gap-2">
+          <div className="text-lg font-semibold">Дедлайны</div>
+          <div className="text-xs text-slate-500">показываются пока задача не закрыта</div>
+        </div>
+
+        {deadlineTasks.length === 0 ? (
+          <div className="mt-2 text-sm text-slate-400">Пока пусто. Дедлайн можно добавить в правке задачи.</div>
+        ) : (
+          <div className="mt-3 grid gap-2">
+            {deadlineTasks.map((t) => {
+              const dl = t.deadlineAt!;
+              const ymd = ymdFromMs(dl);
+              const hhmm = hhmmFromMs(dl);
+
+              return (
+                <div key={t.id} className="rounded-lg border border-slate-800 bg-slate-900 p-2">
+                  <div className="flex flex-wrap items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm text-slate-200">{t.title}</div>
+                      <div className="text-xs text-slate-500">
+                        {ymd} {hhmm} • {fmtDeadlineCountdown(dl, nowMs)}
+                        {t.plannedDate ? ` • в плане: ${t.plannedDate}${t.plannedStart ? " " + t.plannedStart : ""}` : ""}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
+                        title="Запланировать на сегодня (без времени)"
+                        onClick={() => updateTask(t.id, { plannedDate: today, plannedStart: null })}
+                      >
+                        На сегодня
+                      </button>
+                      <button
+                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
+                        title="Сделать жёсткой на время дедлайна"
+                        onClick={() => updateTask(t.id, { plannedDate: ymd, plannedStart: hhmm })}
+                      >
+                        Жёстк.
+                      </button>
+                      <button
+                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
+                        title="Правка"
+                        onClick={() => beginTaskEdit(t.id)}
+                      >
+                        ✎
+                      </button>
+                      <button
+                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
+                        title="Готово"
+                        onClick={() => toggleDone(t.id)}
+                      >
+                        ✓
+                      </button>
+                      <button
+                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
+                        title="Удалить"
+                        onClick={() => deleteTask(t.id)}
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  </div>
+
+                  {editingTaskId === t.id ? <TaskEditPanel /> : null}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* Hard & Flex */}
       <div className="grid gap-3 lg:grid-cols-2">
-        {/* HARD */}
         <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="font-semibold">Жёсткие задачи</div>
+            <div className="text-lg font-semibold">Жёсткие задачи</div>
             <div className="text-xs text-slate-500">plannedStart ≠ null</div>
           </div>
 
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 grid gap-2 md:grid-cols-[1fr,110px,110px,150px,auto] md:items-end">
             <input
-              className="h-10 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
-              value={newHard}
-              onChange={(e) => setNewHard(e.target.value)}
-              placeholder="Новая жёсткая задача…"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addHard();
-              }}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              placeholder="Новая жёсткая задача..."
+              value={hardTitle}
+              onChange={(e) => setHardTitle(e.target.value)}
             />
+
             <input
-              className="h-10 w-[110px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
-              value={newHardTime}
-              onChange={(e) => setNewHardTime(e.target.value)}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={hardTime}
+              onChange={(e) => setHardTime(e.target.value)}
               placeholder="11:00"
             />
-            <button
-              className="h-10 rounded-lg bg-slate-200 px-4 text-sm font-semibold text-slate-950"
-              onClick={addHard}
+
+            <input
+              type="number"
+              min={0}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={hardEstimate}
+              onChange={(e) => setHardEstimate(Number(e.target.value))}
+              title="оценка (мин)"
+            />
+
+            <select
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={hardPriority}
+              onChange={(e) => setHardPriority(Number(e.target.value) as any)}
+              title="приоритет"
             >
+              <option value={1}>Высокий</option>
+              <option value={2}>Средний</option>
+              <option value={3}>Низкий</option>
+            </select>
+
+            <button className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-950" onClick={createHardTask}>
               Добавить
             </button>
           </div>
 
-          <div className="mt-3 grid gap-2">
-            {hardToday.length === 0 ? (
-              <div className="text-sm text-slate-400">Пока пусто</div>
-            ) : (
-              hardToday.map((t) => {
-                const isActive = !!active && active.taskId === t.id;
-                return (
-                  <div
-                    key={t.id}
-                    className="rounded-lg border border-slate-800 bg-slate-900 p-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm text-slate-200">
-                          {t.title}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {t.plannedStart} • {t.estimateMin ? fmtDuration(t.estimateMin) : "без оценки"}
-                        </div>
-                      </div>
+          <div className="mt-2 grid gap-1">
+            <div className="text-xs text-slate-400">Дедлайн (опционально)</div>
+            <input
+              type="datetime-local"
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={hardDeadline}
+              onChange={(e) => setHardDeadline(e.target.value)}
+            />
+          </div>
 
-                      <button
-                        className={`h-9 rounded-lg px-3 text-sm font-semibold ${
-                          isActive
-                            ? "bg-emerald-400 text-slate-950"
-                            : "border border-slate-800 bg-slate-950 text-slate-200 hover:bg-slate-800"
-                        }`}
-                        onClick={() => switchToTask(t.id)}
-                        title="Переключиться на задачу (остановит текущий таймер и запустит этот)"
-                      >
-                        {isActive ? "Идёт" : "Старт"}
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+          <div className="mt-3 grid gap-2">
+            {hardTasks.length === 0 ? <div className="text-sm text-slate-400">Пока пусто</div> : hardTasks.map((t) => <TaskRow key={t.id} t={t} />)}
           </div>
         </div>
 
-        {/* FLEX */}
         <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
           <div className="flex items-center justify-between gap-2">
-            <div className="font-semibold">Гибкие задачи</div>
+            <div className="text-lg font-semibold">Гибкие задачи</div>
             <div className="text-xs text-slate-500">plannedStart = null</div>
           </div>
 
-          <div className="mt-3 flex gap-2">
+          <div className="mt-3 grid gap-2 md:grid-cols-[1fr,110px,150px,auto] md:items-end">
             <input
-              className="h-10 flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
-              value={newFlex}
-              onChange={(e) => setNewFlex(e.target.value)}
-              placeholder="Новая гибкая задача…"
-              onKeyDown={(e) => {
-                if (e.key === "Enter") addFlex();
-              }}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              placeholder="Новая гибкая задача..."
+              value={flexTitle}
+              onChange={(e) => setFlexTitle(e.target.value)}
             />
-            <button
-              className="h-10 rounded-lg bg-slate-200 px-4 text-sm font-semibold text-slate-950"
-              onClick={addFlex}
+
+            <input
+              type="number"
+              min={0}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={flexEstimate}
+              onChange={(e) => setFlexEstimate(Number(e.target.value))}
+              title="оценка (мин)"
+            />
+
+            <select
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={flexPriority}
+              onChange={(e) => setFlexPriority(Number(e.target.value) as any)}
+              title="приоритет"
             >
+              <option value={1}>Высокий</option>
+              <option value={2}>Средний</option>
+              <option value={3}>Низкий</option>
+            </select>
+
+            <button className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-950" onClick={createFlexTask}>
               Добавить
             </button>
           </div>
 
+          <div className="mt-2 grid gap-1">
+            <div className="text-xs text-slate-400">Дедлайн (опционально)</div>
+            <input
+              type="datetime-local"
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={flexDeadline}
+              onChange={(e) => setFlexDeadline(e.target.value)}
+            />
+          </div>
+
           <div className="mt-3 grid gap-2">
-            {flexToday.length === 0 ? (
-              <div className="text-sm text-slate-400">Пока пусто</div>
-            ) : (
-              flexToday.map((t) => {
-                const isActive = !!active && active.taskId === t.id;
-                return (
-                  <div
-                    key={t.id}
-                    className="rounded-lg border border-slate-800 bg-slate-900 p-2"
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <div className="min-w-0">
-                        <div className="truncate text-sm text-slate-200">
-                          {t.title}
-                        </div>
-                        <div className="text-xs text-slate-500">
-                          {t.estimateMin ? fmtDuration(t.estimateMin) : "без оценки"}
-                        </div>
-                      </div>
-
-                      <button
-                        className={`h-9 rounded-lg px-3 text-sm font-semibold ${
-                          isActive
-                            ? "bg-emerald-400 text-slate-950"
-                            : "border border-slate-800 bg-slate-950 text-slate-200 hover:bg-slate-800"
-                        }`}
-                        onClick={() => switchToTask(t.id)}
-                        title="Переключиться на задачу (остановит текущий таймер и запустит этот)"
-                      >
-                        {isActive ? "Идёт" : "Старт"}
-                      </button>
-                    </div>
-
-                    <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <button
-                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
-                        onClick={() => updateTask(t.id, { plannedStart: "12:00" })}
-                        title="Сделать жёсткой (поставить время; потом поправишь)"
-                      >
-                        Сделать жёсткой
-                      </button>
-                    </div>
-                  </div>
-                );
-              })
-            )}
+            {flexTasks.length === 0 ? <div className="text-sm text-slate-400">Пока пусто</div> : flexTasks.map((t) => <TaskRow key={t.id} t={t} />)}
           </div>
         </div>
       </div>
+
+      {/* Done */}
+      <details className="rounded-xl border border-slate-800 bg-slate-950 p-3">
+        <summary className="cursor-pointer text-lg font-semibold text-slate-200">
+          Выполнено сегодня <span className="text-sm font-normal text-slate-500">({doneToday.length})</span>
+        </summary>
+
+        <div className="mt-3 grid gap-2">
+          {doneToday.length === 0 ? (
+            <div className="text-sm text-slate-400">Пока нет</div>
+          ) : (
+            doneToday.map((t) => (
+              <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2">
+                <div className="min-w-0">
+                  <div className="truncate text-sm text-slate-200">{t.title}</div>
+                  <div className="text-xs text-slate-500">
+                    {t.plannedStart ? `время ${t.plannedStart} • ` : ""}
+                    приоритет: {prioLabel(t.priority)}
+                    {t.deadlineAt ? ` • дедлайн: ${ymdFromMs(t.deadlineAt)} ${hhmmFromMs(t.deadlineAt)}` : ""}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
+                    title="Вернуть в TODO"
+                    onClick={() => toggleDone(t.id)}
+                  >
+                    ↩︎
+                  </button>
+                  <button
+                    className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
+                    title="Правка"
+                    onClick={() => beginTaskEdit(t.id)}
+                  >
+                    ✎
+                  </button>
+                </div>
+
+                {editingTaskId === t.id ? <TaskEditPanel /> : null}
+              </div>
+            ))
+          )}
+        </div>
+      </details>
     </div>
   );
 }
