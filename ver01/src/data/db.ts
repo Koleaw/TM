@@ -18,6 +18,12 @@ export type Task = {
   plannedStart: string | null; // HH:MM (если есть — считаем "жесткой")
   estimateMin: number | null;
 
+  // приоритет: 1=высокий, 2=средний, 3=низкий
+  priority: 1 | 2 | 3;
+
+  // дедлайн (если есть). epoch ms
+  deadlineAt: number | null;
+
   createdAt: number;
   updatedAt: number;
 };
@@ -272,6 +278,8 @@ function normalizeTask(t: any): Task {
     plannedDate: t.plannedDate ?? null,
     plannedStart: t.plannedStart ?? null,
     estimateMin: typeof t.estimateMin === "number" ? t.estimateMin : null,
+    priority: (t.priority === 1 || t.priority === 2 || t.priority === 3) ? t.priority : 2,
+    deadlineAt: typeof t.deadlineAt === "number" ? t.deadlineAt : null,
     createdAt: typeof t.createdAt === "number" ? t.createdAt : now(),
     updatedAt: typeof t.updatedAt === "number" ? t.updatedAt : now(),
   };
@@ -319,6 +327,8 @@ export function createTask(
     plannedDate: null,
     plannedStart: null,
     estimateMin: null,
+    priority: 2,
+    deadlineAt: null,
     createdAt: now(),
     updatedAt: now(),
     ...(opts ?? {}),
@@ -594,7 +604,7 @@ function csvEscape(v: any) {
 }
 
 export function tasksToCsv(tasks: Task[]) {
-  const header = ["id", "title", "status", "plannedDate", "plannedStart", "estimateMin", "tags", "notes", "createdAt", "updatedAt"];
+  const header = ["id", "title", "status", "plannedDate", "plannedStart", "estimateMin", "priority", "deadlineAt", "tags", "notes", "createdAt", "updatedAt"];
   const rows = tasks.map((t) => [
     t.id,
     t.title,
@@ -602,6 +612,8 @@ export function tasksToCsv(tasks: Task[]) {
     t.plannedDate ?? "",
     t.plannedStart ?? "",
     t.estimateMin ?? "",
+    t.priority ?? 2,
+    t.deadlineAt ?? "",
     t.tags.join(" "),
     t.notes,
     new Date(t.createdAt).toISOString(),
