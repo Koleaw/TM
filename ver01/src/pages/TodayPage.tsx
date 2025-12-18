@@ -1,400 +1,417 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Task,
-  TimeLogKind,
   createTask,
   deleteTask,
   moveTask,
   startTimer,
   stopTimer,
-  todayYMD,
   toggleDone,
+  todayYMD,
   updateTask,
+  updateTimeLog,
   useAppState,
   ymdAddDays,
+  type Task,
+  type TimeLogKind,
 } from "../data/db";
 
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
 
-function toLocalDateTimeInput(ms: number) {
-  const d = new Date(ms);
-  const y = d.getFullYear();
-  const m = pad2(d.getMonth() + 1);
-  const day = pad2(d.getDate());
-  const hh = pad2(d.getHours());
-  const mm = pad2(d.getMinutes());
-  return `${y}-${m}-${day}T${hh}:${mm}`;
-}
-
-function parseLocalDateTimeInput(v: string) {
-  const t = new Date(v).getTime();
-  return Number.isFinite(t) ? t : NaN;
-}
-
 function fmtDuration(mins: number) {
-  const h = Math.floor(mins / 60);
-  const m = mins % 60;
-  if (h <= 0) return `${m} мин`;
-  if (m === 0) return `${h} ч`;
-  return `${h} ч ${m} мин`;
+  const m = Math.max(0, Math.round(mins));
+  const h = Math.floor(m / 60);
+  const r = m % 60;
+  if (h <= 0) return `${r} мин`;
+  if (r === 0) return `${h} ч`;
+  return `${h} ч ${r} мин`;
 }
 
-function parseHHMMToMinutes(v: string | null) {
-  if (!v) return Number.POSITIVE_INFINITY;
-  const m = /^([01]\d|2[0-3]):([0-5]\d)$/.exec(v);
-  if (!m) return Number.POSITIVE_INFINITY;
-  return Number(m[1]) * 60 + Number(m[2]);
+function fmtElapsed(ms: number) {
+  const s = Math.max(0, Math.floor(ms / 1000));
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const r = s % 60;
+  if (h > 0) return `${h}:${pad2(m)}:${pad2(r)}`;
+  return `${m}:${pad2(r)}`;
 }
 
-function prioLabel(p: 1 | 2 | 3) {
+function prioLabel(p?: number | null) {
   if (p === 1) return "Высокий";
   if (p === 2) return "Средний";
   return "Низкий";
 }
 
-function fmtDeadlineCountdown(deadlineAt: number, nowMs: number) {
-  const diff = deadlineAt - nowMs;
-  const sign = diff < 0 ? -1 : 1;
-  const abs = Math.abs(diff);
+function parseDeadlineInput(v: string) {
+  // ожидаем "YYYY-MM-DDTHH:MM" (datetime-local) или пусто
+  if (!v) return null;
+  const t = new Date(v).getTime();
+  return Number.isFinite(t) ? t : null;
+}
 
-  const totalMin = Math.round(abs / 60000);
+function toLocalDateTimeInput(ms: number) {
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}T${pad2(
+    d.getHours()
+  )}:${pad2(d.getMinutes())}`;
+}
+
+function fmtCountdown(ms: number) {
+  const sign = ms < 0 ? -1 : 1;
+  const a = Math.abs(ms);
+  const totalMin = Math.floor(a / 60000);
   const d = Math.floor(totalMin / (60 * 24));
-  const h = Math.floor((totalMin - d * 60 * 24) / 60);
-  const m = totalMin - d * 60 * 24 - h * 60;
+  const h = Math.floor((totalMin % (60 * 24)) / 60);
+  const m = totalMin % 60;
 
   const parts: string[] = [];
-  if (d > 0) parts.push(`${d} д`);
-  if (h > 0) parts.push(`${h} ч`);
-  if (d === 0 && h === 0) parts.push(`${m} мин`);
+  if (d) parts.push(`${d}д`);
+  if (h) parts.push(`${h}ч`);
+  if (!d && !h) parts.push(`${m}м`);
+  const body = parts.join(" ");
 
-  const s = parts.join(" ");
-  return sign < 0 ? `просрочено на ${s}` : `осталось ${s}`;
-}
-
-function ymdFromMs(ms: number) {
-  const d = new Date(ms);
-  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())}`;
-}
-
-function hhmmFromMs(ms: number) {
-  const d = new Date(ms);
-  return `${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+  return sign < 0 ? `просрочено на ${body}` : `через ${body}`;
 }
 
 export default function TodayPage() {
   const s = useAppState();
-  const today = todayYMD();
-  const tomorrow = ymdAddDays(today, 1);
 
-  // ---------- Таймер ----------
-  const active = s.activeTimer;
-
-  // тикер, чтобы счётчик минут обновлялся (иначе он "замрёт" на 0)
-  const [tick, setTick] = useState(0);
-  useEffect(() => {
-    if (!active) return;
-    const id = window.setInterval(() => setTick((x) => x + 1), 5000);
-    return () => window.clearInterval(id);
-  }, [active?.startedAt]);
-
-  const elapsedMin = useMemo(() => {
-    if (!active) return 0;
-    const diff = Date.now() - active.startedAt;
-    return Math.max(0, Math.floor(diff / 60000));
-  }, [active, tick]);
+  const today = useMemo(() => todayYMD(), []);
+  const tomorrow = useMemo(() => ymdAddDays(today, 1), [today]);
+  const yesterday = useMemo(() => ymdAddDays(today, -1), [today]);
 
   const timeTypes = useMemo(() => s.lists.timeTypes ?? [], [s.lists.timeTypes]);
+  const sinks = useMemo(() => s.lists.sinks ?? [], [s.lists.sinks]);
 
-  const [timerTimeTypeId, setTimerTimeTypeId] = useState<string>("");
-  const [timerNote, setTimerNote] = useState<string>("");
-
-  // пауза
-  const [pauseOpen, setPauseOpen] = useState(false);
-  const [pauseTimeTypeId, setPauseTimeTypeId] = useState<string>("");
-  const [pauseKind, setPauseKind] = useState<TimeLogKind>("rest");
-  const [pauseSinkId, setPauseSinkId] = useState<string>("");
-
-  // ---------- Задачи ----------
-  const tasksTodayAll = useMemo(
-    () => s.tasks.filter((t) => t.plannedDate === today),
+  const tasksToday = useMemo(
+    () => s.tasks.filter((t) => t.plannedDate === today && t.status !== "done"),
     [s.tasks, today]
   );
 
-  const hardTasks = useMemo(
-    () =>
-      tasksTodayAll
-        .filter((t) => t.status === "todo" && t.plannedStart)
-        .sort((a, b) => {
-          const ta = parseHHMMToMinutes(a.plannedStart);
-          const tb = parseHHMMToMinutes(b.plannedStart);
-          if (ta !== tb) return ta - tb;
-          if (a.priority !== b.priority) return a.priority - b.priority;
-          return b.updatedAt - a.updatedAt;
-        }),
-    [tasksTodayAll]
+  const hardToday = useMemo(
+    () => tasksToday.filter((t) => !!t.plannedStart).sort((a, b) => (a.plannedStart ?? "").localeCompare(b.plannedStart ?? "")),
+    [tasksToday]
   );
 
-  const flexTasks = useMemo(
+  const flexToday = useMemo(
     () =>
-      tasksTodayAll
-        .filter((t) => t.status === "todo" && !t.plannedStart)
-        .sort((a, b) => {
-          if (a.priority !== b.priority) return a.priority - b.priority;
-          return b.updatedAt - a.updatedAt;
-        }),
-    [tasksTodayAll]
+      tasksToday
+        .filter((t) => !t.plannedStart)
+        .sort((a, b) => (a.priority ?? 2) - (b.priority ?? 2) || b.updatedAt - a.updatedAt),
+    [tasksToday]
   );
 
   const doneToday = useMemo(
-    () => tasksTodayAll.filter((t) => t.status === "done").sort((a, b) => b.updatedAt - a.updatedAt),
-    [tasksTodayAll]
+    () => s.tasks.filter((t) => t.plannedDate === today && t.status === "done"),
+    [s.tasks, today]
   );
 
-  const nowMs = Date.now();
   const deadlineTasks = useMemo(() => {
-    return [...s.tasks]
-      .filter((t) => t.status === "todo" && t.deadlineAt !== null)
-      .sort((a, b) => (a.deadlineAt ?? 0) - (b.deadlineAt ?? 0))
-      .slice(0, 12);
+    return s.tasks
+      .filter((t) => t.status !== "done" && typeof t.deadlineAt === "number")
+      .sort((a, b) => (a.deadlineAt ?? 0) - (b.deadlineAt ?? 0));
   }, [s.tasks]);
 
-  // ---------- Добавление ----------
-  const [hardTitle, setHardTitle] = useState("");
-  const [hardTime, setHardTime] = useState("11:00");
-  const [hardEstimate, setHardEstimate] = useState(60);
-  const [hardPriority, setHardPriority] = useState<1 | 2 | 3>(2);
-  const [hardDeadline, setHardDeadline] = useState<string>("");
+  // ---------------- Timer ----------------
+  const active = s.activeTimer;
 
-  const [flexTitle, setFlexTitle] = useState("");
-  const [flexEstimate, setFlexEstimate] = useState(60);
-  const [flexPriority, setFlexPriority] = useState<1 | 2 | 3>(2);
-  const [flexDeadline, setFlexDeadline] = useState<string>("");
+  const [tickMs, setTickMs] = useState(0);
+  useEffect(() => {
+    if (!active) return;
+    setTickMs(Date.now());
+    const id = setInterval(() => setTickMs(Date.now()), 500);
+    return () => clearInterval(id);
+  }, [active]);
 
-  function createHardTask() {
-    const title = hardTitle.trim();
+  const elapsedMs = useMemo(() => {
+    if (!active) return 0;
+    const now = tickMs || Date.now();
+    return Math.max(0, now - active.startedAt);
+  }, [active, tickMs]);
+
+  const elapsedLabel = useMemo(() => fmtElapsed(elapsedMs), [elapsedMs]);
+
+  const activeTaskTitle = useMemo(() => {
+    if (!active) return "";
+    if (!active.taskId) return "(без задачи)";
+    const t = s.tasks.find((x) => x.id === active.taskId);
+    return t?.title ?? "(задача удалена)";
+  }, [active, s.tasks]);
+
+  const timerStatus = active ? `идёт… (${elapsedLabel})` : "простой";
+
+  const [timerTimeTypeId, setTimerTimeTypeId] = useState<string>("");
+  const [activeNote, setActiveNote] = useState<string>("");
+
+  // Пауза (как отдельный лог)
+  const [pauseOpen, setPauseOpen] = useState(false);
+  const [pauseKind, setPauseKind] = useState<TimeLogKind>("useful");
+  const [pauseTimeTypeId, setPauseTimeTypeId] = useState<string>("");
+  const [pauseSinkId, setPauseSinkId] = useState<string>("");
+
+  useEffect(() => {
+    // дефолт паузы: тип "Поглотитель" если есть
+    if (!pauseTimeTypeId) {
+      const sinkTT = timeTypes.find((x) => x.name.toLowerCase().includes("поглот"));
+      if (sinkTT) setPauseTimeTypeId(sinkTT.id);
+    }
+  }, [pauseTimeTypeId, timeTypes]);
+
+  function stopCurrent() {
+    if (!active) return;
+    stopTimer(activeNote);
+    setActiveNote("");
+  }
+
+  function stopCurrentWithExactEnd(endedAtMs: number) {
+    // stopTimer пишет endedAt=now(); потом мы уточняем endedAt, чтобы переключение было «ровным»
+    stopTimer(activeNote);
+    setActiveNote("");
+
+    const newLogId = s.timeLogs[0]?.id; // НЕ НАДЁЖНО при очень быстрой гонке, но в локальном single-user ок
+    if (newLogId) updateTimeLog(newLogId, { endedAt: endedAtMs });
+  }
+
+  function switchToTask(nextTaskId: string | null, nextTimeTypeId: string | null) {
+    const endedAtMs = Date.now();
+    if (active) stopCurrentWithExactEnd(endedAtMs);
+    startTimer(nextTaskId, nextTimeTypeId ?? null, "useful", null);
+  }
+
+  function startNoTask() {
+    // старт без задачи: "Дорога", "Быт", "Коммуникации" и т.п.
+    if (active) return;
+    startTimer(null, timerTimeTypeId || null, "useful", null);
+  }
+
+  function startPause() {
+    if (!active) return;
+    const endedAtMs = Date.now();
+    stopCurrentWithExactEnd(endedAtMs);
+
+    startTimer(
+      null,
+      pauseTimeTypeId || null,
+      pauseKind,
+      pauseKind === "sink" ? (pauseSinkId || null) : null
+    );
+
+    setPauseOpen(false);
+  }
+
+  // ---------------- Create new tasks ----------------
+  const [newHardTitle, setNewHardTitle] = useState("");
+  const [newHardStart, setNewHardStart] = useState("11:00");
+  const [newHardEstimate, setNewHardEstimate] = useState("60"); // строка => можно очистить
+  const [newHardPriority, setNewHardPriority] = useState<1 | 2 | 3>(2);
+  const [newHardDeadline, setNewHardDeadline] = useState<string>("");
+
+  const [newFlexTitle, setNewFlexTitle] = useState("");
+  const [newFlexEstimate, setNewFlexEstimate] = useState("60");
+  const [newFlexPriority, setNewFlexPriority] = useState<1 | 2 | 3>(2);
+  const [newFlexDeadline, setNewFlexDeadline] = useState<string>("");
+
+  function parseEstimate(v: string) {
+    const n = Number(v);
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return Math.round(n);
+  }
+
+  function addHardTask() {
+    const title = newHardTitle.trim();
     if (!title) return;
-
-    const deadlineAt = hardDeadline.trim() ? parseLocalDateTimeInput(hardDeadline.trim()) : NaN;
 
     createTask(title, {
       plannedDate: today,
-      plannedStart: hardTime,
-      estimateMin: hardEstimate,
-      priority: hardPriority,
-      deadlineAt: Number.isFinite(deadlineAt) ? deadlineAt : null,
+      plannedStart: newHardStart || "11:00",
+      estimateMin: parseEstimate(newHardEstimate),
+      priority: newHardPriority,
+      deadlineAt: parseDeadlineInput(newHardDeadline),
     });
 
-    setHardTitle("");
-    setHardDeadline("");
+    setNewHardTitle("");
+    setNewHardDeadline("");
   }
 
-  function createFlexTask() {
-    const title = flexTitle.trim();
+  function addFlexTask() {
+    const title = newFlexTitle.trim();
     if (!title) return;
-
-    const deadlineAt = flexDeadline.trim() ? parseLocalDateTimeInput(flexDeadline.trim()) : NaN;
 
     createTask(title, {
       plannedDate: today,
       plannedStart: null,
-      estimateMin: flexEstimate,
-      priority: flexPriority,
-      deadlineAt: Number.isFinite(deadlineAt) ? deadlineAt : null,
+      estimateMin: parseEstimate(newFlexEstimate),
+      priority: newFlexPriority,
+      deadlineAt: parseDeadlineInput(newFlexDeadline),
     });
 
-    setFlexTitle("");
-    setFlexDeadline("");
+    setNewFlexTitle("");
+    setNewFlexDeadline("");
   }
 
-  // ---------- Редактирование ----------
+  // ---------------- Edit panel ----------------
   const [editingTaskId, setEditingTaskId] = useState<string | null>(null);
+
+  const editingTask = useMemo(
+    () => (editingTaskId ? s.tasks.find((t) => t.id === editingTaskId) ?? null : null),
+    [editingTaskId, s.tasks]
+  );
+
   const [editTitle, setEditTitle] = useState("");
-  const [editPlannedDate, setEditPlannedDate] = useState<string>(today);
-  const [editPlannedStart, setEditPlannedStart] = useState<string>("");
-  const [editEstimate, setEditEstimate] = useState<number>(60);
+  const [editNotes, setEditNotes] = useState("");
+  const [editPlannedDate, setEditPlannedDate] = useState<string | null>(null);
+  const [editPlannedStart, setEditPlannedStart] = useState<string | null>(null);
+  const [editEstimate, setEditEstimate] = useState<string>("");
   const [editPriority, setEditPriority] = useState<1 | 2 | 3>(2);
   const [editDeadline, setEditDeadline] = useState<string>("");
-  const [editNotes, setEditNotes] = useState<string>("");
 
-  function beginTaskEdit(taskId: string) {
-    const t = s.tasks.find((x) => x.id === taskId);
-    if (!t) return;
+  useEffect(() => {
+    if (!editingTask) return;
+    setEditTitle(editingTask.title ?? "");
+    setEditNotes(editingTask.notes ?? "");
+    setEditPlannedDate(editingTask.plannedDate ?? null);
+    setEditPlannedStart(editingTask.plannedStart ?? null);
+    setEditEstimate(
+      typeof editingTask.estimateMin === "number" ? String(editingTask.estimateMin) : ""
+    );
+    setEditPriority((editingTask.priority as any) ?? 2);
+    setEditDeadline(
+      typeof editingTask.deadlineAt === "number" ? toLocalDateTimeInput(editingTask.deadlineAt) : ""
+    );
+  }, [editingTask]);
 
-    setEditingTaskId(t.id);
-    setEditTitle(t.title ?? "");
-    setEditPlannedDate(t.plannedDate ?? today);
-    setEditPlannedStart(t.plannedStart ?? "");
-    setEditEstimate(typeof t.estimateMin === "number" ? t.estimateMin : 60);
-    setEditPriority(t.priority ?? 2);
-
-    setEditDeadline(t.deadlineAt ? toLocalDateTimeInput(t.deadlineAt) : "");
-    setEditNotes(t.notes ?? "");
+  function beginTaskEdit(id: string) {
+    setEditingTaskId(id);
   }
 
   function saveTaskEdit() {
     if (!editingTaskId) return;
 
-    const dl = editDeadline.trim() ? parseLocalDateTimeInput(editDeadline.trim()) : NaN;
-
     updateTask(editingTaskId, {
       title: editTitle.trim() || "Без названия",
-      plannedDate: editPlannedDate ? editPlannedDate : null,
-      plannedStart: editPlannedStart.trim() ? editPlannedStart.trim() : null,
-      estimateMin: Number.isFinite(editEstimate) ? editEstimate : null,
-      priority: editPriority,
-      deadlineAt: Number.isFinite(dl) ? dl : null,
       notes: editNotes ?? "",
+      plannedDate: editPlannedDate ?? null,
+      plannedStart: editPlannedStart ? editPlannedStart : null,
+      estimateMin: parseEstimate(editEstimate),
+      priority: editPriority,
+      deadlineAt: parseDeadlineInput(editDeadline),
     });
 
     setEditingTaskId(null);
   }
 
-  // ---------- Действия таймера ----------
-  function stopCurrent() {
-    if (!active) return;
-    stopTimer(timerNote);
-    setTimerNote("");
-  }
+  function TaskEditPanel() {
+    if (!editingTask) return null;
 
-  // Переключение на другую задачу (стрелка)
-  function switchToTask(taskId: string | null) {
-    if (!active) {
-      startTimer(taskId, timerTimeTypeId || null, "useful", null);
-      return;
-    }
-    if (active.taskId === taskId) return;
+    return (
+      <div className="mt-2 grid gap-2 rounded-lg border border-slate-800 bg-slate-950 p-2">
+        <div className="text-xs text-slate-500">Правка задачи</div>
 
-    stopTimer(timerNote);
-    setTimerNote("");
+        <div className="grid gap-2 md:grid-cols-2">
+          <label className="grid gap-1">
+            <span className="text-xs text-slate-400">Название</span>
+            <input
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={editTitle}
+              onChange={(e) => setEditTitle(e.target.value)}
+            />
+          </label>
 
-    startTimer(taskId, active.timeTypeId ?? null, active.kind ?? "useful", active.sinkId ?? null);
-  }
+          <label className="grid gap-1">
+            <span className="text-xs text-slate-400">Приоритет</span>
+            <select
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={editPriority}
+              onChange={(e) => setEditPriority(Number(e.target.value) as any)}
+            >
+              <option value={1}>Высокий</option>
+              <option value={2}>Средний</option>
+              <option value={3}>Низкий</option>
+            </select>
+          </label>
 
-  // Пауза = отдельный лог без привязки к задаче
-  function pauseCurrent() {
-    if (!active) return;
+          <label className="grid gap-1">
+            <span className="text-xs text-slate-400">Дата (план)</span>
+            <input
+              type="date"
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={editPlannedDate ?? ""}
+              onChange={(e) => setEditPlannedDate(e.target.value ? e.target.value : null)}
+            />
+          </label>
 
-    stopTimer(timerNote);
-    setTimerNote("");
+          <label className="grid gap-1">
+            <span className="text-xs text-slate-400">Время (если нужно “жёстко”)</span>
+            <input
+              type="time"
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={editPlannedStart ?? ""}
+              onChange={(e) => setEditPlannedStart(e.target.value ? e.target.value : null)}
+            />
+          </label>
 
-    startTimer(null, pauseTimeTypeId || null, pauseKind, pauseKind === "sink" ? (pauseSinkId || null) : null);
-    setPauseOpen(false);
-  }
+          <label className="grid gap-1">
+            <span className="text-xs text-slate-400">Оценка (план, мин)</span>
+            <input
+              type="number"
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={editEstimate}
+              onChange={(e) => setEditEstimate(e.target.value)}
+              placeholder="например 60"
+            />
+          </label>
 
-  const activeTaskTitle = useMemo(() => {
-    if (!active?.taskId) return "без привязки";
-    const t = s.tasks.find((x) => x.id === active.taskId);
-    return t?.title ?? "(задача удалена)";
-  }, [active?.taskId, s.tasks]);
-
-  const timerStatus = active ? `идёт… (${elapsedMin} мин)` : "простой";
-
-  const TaskEditPanel = () => (
-    <div className="mt-2 rounded-lg border border-slate-800 bg-slate-950 p-2">
-      <div className="grid gap-2 md:grid-cols-2">
-        <label className="grid gap-1">
-          <span className="text-xs text-slate-400">Название</span>
-          <input
-            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-            value={editTitle}
-            onChange={(e) => setEditTitle(e.target.value)}
-          />
-        </label>
-
-        <label className="grid gap-1">
-          <span className="text-xs text-slate-400">Приоритет</span>
-          <select
-            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-            value={editPriority}
-            onChange={(e) => setEditPriority(Number(e.target.value) as any)}
-          >
-            <option value={1}>Высокий</option>
-            <option value={2}>Средний</option>
-            <option value={3}>Низкий</option>
-          </select>
-        </label>
-
-        <label className="grid gap-1">
-          <span className="text-xs text-slate-400">Дата (в плане)</span>
-          <input
-            type="date"
-            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-            value={editPlannedDate ?? ""}
-            onChange={(e) => setEditPlannedDate(e.target.value)}
-          />
-        </label>
+          <label className="grid gap-1">
+            <span className="text-xs text-slate-400">Дедлайн</span>
+            <input
+              type="datetime-local"
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              value={editDeadline}
+              onChange={(e) => setEditDeadline(e.target.value)}
+            />
+          </label>
+        </div>
 
         <label className="grid gap-1">
-          <span className="text-xs text-slate-400">Время (если жёсткая) HH:MM</span>
-          <input
-            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-            value={editPlannedStart}
-            onChange={(e) => setEditPlannedStart(e.target.value)}
-            placeholder="например 16:00"
-          />
-        </label>
-
-        <label className="grid gap-1">
-          <span className="text-xs text-slate-400">Оценка (мин)</span>
-          <input
-            type="number"
-            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-            value={editEstimate}
-            onChange={(e) => setEditEstimate(Number(e.target.value))}
-            min={0}
-          />
-        </label>
-
-        <label className="grid gap-1">
-          <span className="text-xs text-slate-400">Дедлайн</span>
-          <input
-            type="datetime-local"
-            className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-            value={editDeadline}
-            onChange={(e) => setEditDeadline(e.target.value)}
-          />
-        </label>
-
-        <label className="grid gap-1 md:col-span-2">
           <span className="text-xs text-slate-400">Заметки</span>
           <textarea
-            className="min-h-[70px] rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+            className="min-h-[80px] rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
             value={editNotes}
             onChange={(e) => setEditNotes(e.target.value)}
+            placeholder="Контекст, что сделать, критерии готовности…"
           />
         </label>
-      </div>
 
-      <div className="mt-2 flex items-center justify-end gap-2">
-        <button
-          className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-800"
-          onClick={() => setEditingTaskId(null)}
-        >
-          Отмена
-        </button>
-        <button
-          className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-950"
-          onClick={saveTaskEdit}
-        >
-          Сохранить
-        </button>
+        <div className="flex items-center gap-2">
+          <button
+            className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-950"
+            onClick={saveTaskEdit}
+          >
+            Сохранить
+          </button>
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm hover:bg-slate-800"
+            onClick={() => setEditingTaskId(null)}
+          >
+            Отмена
+          </button>
+        </div>
       </div>
-    </div>
-  );
+    );
+  }
 
   function TaskRow({ t }: { t: Task }) {
     const isActive = active?.taskId === t.id;
 
-    const meta = [
-      t.plannedStart ? t.plannedStart : null,
-      typeof t.estimateMin === "number" ? `оценка ${fmtDuration(t.estimateMin)}` : "без оценки",
-      `приоритет: ${prioLabel(t.priority)}`,
-      t.deadlineAt ? `дедлайн: ${ymdFromMs(t.deadlineAt)} ${hhmmFromMs(t.deadlineAt)}` : null,
-    ]
-      .filter(Boolean)
-      .join(" • ");
+    const metaParts: string[] = [];
+    if (t.plannedStart) metaParts.push(t.plannedStart);
+    metaParts.push(`приоритет: ${prioLabel(t.priority)}`);
+    if (typeof t.estimateMin === "number") metaParts.push(`оценка ${fmtDuration(t.estimateMin)}`);
+    if (typeof t.deadlineAt === "number") metaParts.push(`дедлайн ${fmtCountdown(t.deadlineAt - Date.now())}`);
+    if (isActive) metaParts.push(`идёт ${elapsedLabel}`);
+
+    const meta = metaParts.join(" • ");
 
     return (
       <div className={`rounded-lg border border-slate-800 bg-slate-900 p-2 ${isActive ? "ring-1 ring-emerald-400" : ""}`}>
@@ -423,7 +440,7 @@ export default function TodayPage() {
             ) : (
               <button
                 className="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950"
-                onClick={() => switchToTask(t.id)}
+                onClick={() => switchToTask(t.id, timerTimeTypeId || null)}
                 title="Переключиться (стрелка)"
               >
                 →
@@ -443,6 +460,13 @@ export default function TodayPage() {
               onClick={() => toggleDone(t.id)}
             >
               ✓
+            </button>
+            <button
+              className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+              title="Перенести на вчера"
+              onClick={() => moveTask(t.id, yesterday, t.plannedStart ?? null)}
+            >
+              ⇠
             </button>
             <button
               className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
@@ -466,6 +490,55 @@ export default function TodayPage() {
     );
   }
 
+  function DeadlineRow({ t }: { t: Task }) {
+    const left = typeof t.deadlineAt === "number" ? (t.deadlineAt - Date.now()) : 0;
+
+    return (
+      <div className="rounded-lg border border-slate-800 bg-slate-900 p-2">
+        <div className="flex items-center justify-between gap-2">
+          <div className="min-w-0">
+            <div className="truncate text-sm text-slate-200">{t.title}</div>
+            <div className="text-xs text-slate-500">
+              дедлайн {fmtCountdown(left)}
+              {t.plannedDate ? ` • в плане: ${t.plannedDate}${t.plannedStart ? ` ${t.plannedStart}` : ""}` : " • не запланировано"}
+              {` • приоритет: ${prioLabel(t.priority)}`}
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2">
+            {t.plannedDate !== today ? (
+              <button
+                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
+                onClick={() => moveTask(t.id, today, t.plannedStart ?? null)}
+                title="Добавить в план на сегодня"
+              >
+                В сегодня
+              </button>
+            ) : null}
+
+            <button
+              className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+              title="Правка"
+              onClick={() => beginTaskEdit(t.id)}
+            >
+              ✎
+            </button>
+
+            <button
+              className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+              title="Готово"
+              onClick={() => toggleDone(t.id)}
+            >
+              ✓
+            </button>
+          </div>
+        </div>
+
+        {editingTaskId === t.id ? <TaskEditPanel /> : null}
+      </div>
+    );
+  }
+
   return (
     <div className="grid gap-3">
       {/* Header + timer */}
@@ -480,15 +553,17 @@ export default function TodayPage() {
           </div>
 
           <div className="text-sm text-slate-400">
-            {active ? "Чтобы переключиться — нажми стрелку у нужной задачи ниже" : "Таймер не запущен — стартуй задачу ниже"}
+            {active
+              ? "Чтобы переключиться — нажми стрелку у нужной задачи ниже"
+              : "Таймер не запущен — стартуй задачу ниже или запусти «без задачи»"}
           </div>
         </div>
 
-        <div className="mt-3 grid gap-2 md:grid-cols-[1fr,auto,auto] md:items-end">
-          <div className="grid gap-1">
+        <div className="mt-3 flex flex-wrap items-end gap-2">
+          <div className="grid gap-1 flex-1 min-w-[240px]">
             <div className="text-xs text-slate-400">Тип времени (для старта)</div>
             <select
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
+              className="h-10 rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
               value={timerTimeTypeId}
               onChange={(e) => setTimerTimeTypeId(e.target.value)}
               disabled={!!active}
@@ -503,56 +578,55 @@ export default function TodayPage() {
           </div>
 
           {!active ? (
-            <div className="text-sm text-slate-500 md:text-right">Запусти задачу кнопкой “Старт” ниже</div>
+            <button
+              className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-4 text-sm hover:bg-slate-800"
+              onClick={startNoTask}
+              title="Например: Дорога / Быт / Коммуникации — без привязки к задаче"
+            >
+              Старт без задачи
+            </button>
           ) : (
             <>
               <button
-                className="rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm hover:bg-slate-800"
+                className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-4 text-sm hover:bg-slate-800"
                 onClick={() => setPauseOpen((x) => !x)}
                 title="Пауза = отдельный лог в таймшите"
               >
                 ⏸︎ Пауза
               </button>
-              <button className="rounded-lg bg-emerald-400 px-4 py-2 text-sm font-semibold text-slate-950" onClick={stopCurrent}>
+              <button
+                className="h-10 rounded-lg bg-emerald-400 px-4 text-sm font-semibold text-slate-950"
+                onClick={stopCurrent}
+              >
                 Стоп
               </button>
             </>
           )}
         </div>
 
-        {active && (
+        {active ? (
           <div className="mt-3 grid gap-1">
-            <div className="text-xs text-slate-400">Комментарий к текущей записи (добавится при “Стоп” или переключении)</div>
+            <div className="text-xs text-slate-400">
+              Комментарий к текущей записи (добавится при “Стоп” или переключении)
+            </div>
             <input
               className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              value={timerNote}
-              onChange={(e) => setTimerNote(e.target.value)}
-              placeholder="Например: правки по чертежу, созвон, дорога…"
+              value={activeNote}
+              onChange={(e) => setActiveNote(e.target.value)}
+              placeholder="Например: созвон, правки, дорога, бытовуха…"
             />
           </div>
-        )}
+        ) : null}
 
-        {active && pauseOpen && (
-          <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900 p-3">
-            <div className="text-sm font-semibold">Пауза</div>
-            <div className="mt-2 grid gap-2 md:grid-cols-3">
-              <div className="grid gap-1">
-                <div className="text-xs text-slate-400">Класс</div>
-                <select
-                  className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm"
-                  value={pauseKind}
-                  onChange={(e) => setPauseKind(e.target.value as any)}
-                >
-                  <option value="useful">Полезное</option>
-                  <option value="rest">Отдых</option>
-                  <option value="sink">Поглотитель</option>
-                </select>
-              </div>
+        {active && pauseOpen ? (
+          <div className="mt-3 rounded-lg border border-slate-800 bg-slate-900 p-2">
+            <div className="text-xs text-slate-400 mb-2">Пауза: что это было?</div>
 
-              <div className="grid gap-1">
-                <div className="text-xs text-slate-400">Тип времени</div>
+            <div className="grid gap-2 md:grid-cols-3">
+              <label className="grid gap-1">
+                <span className="text-xs text-slate-400">Тип времени</span>
                 <select
-                  className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm"
+                  className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm"
                   value={pauseTimeTypeId}
                   onChange={(e) => setPauseTimeTypeId(e.target.value)}
                 >
@@ -563,39 +637,58 @@ export default function TodayPage() {
                     </option>
                   ))}
                 </select>
-              </div>
+              </label>
 
-              <div className="grid gap-1">
-                <div className="text-xs text-slate-400">Поглотитель (если выбран)</div>
+              <label className="grid gap-1">
+                <span className="text-xs text-slate-400">Класс</span>
                 <select
-                  className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm"
+                  className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm"
+                  value={pauseKind}
+                  onChange={(e) => setPauseKind(e.target.value as TimeLogKind)}
+                >
+                  <option value="useful">Полезное</option>
+                  <option value="sink">Поглотитель</option>
+                  <option value="rest">Отдых</option>
+                </select>
+              </label>
+
+              <label className="grid gap-1">
+                <span className="text-xs text-slate-400">Поглотитель (если выбран)</span>
+                <select
+                  className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm"
                   value={pauseSinkId}
                   onChange={(e) => setPauseSinkId(e.target.value)}
                   disabled={pauseKind !== "sink"}
                 >
                   <option value="">(не выбран)</option>
-                  {(s.lists.sinks ?? []).map((it) => (
+                  {sinks.map((it) => (
                     <option key={it.id} value={it.id}>
                       {it.name}
                     </option>
                   ))}
                 </select>
-              </div>
+              </label>
             </div>
 
-            <div className="mt-3 flex items-center justify-end gap-2">
+            <div className="mt-2 flex items-center gap-2">
               <button
-                className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-800"
+                className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-950"
+                onClick={startPause}
+              >
+                Начать паузу
+              </button>
+              <button
+                className="rounded-lg border border-slate-800 bg-slate-950 px-4 py-2 text-sm hover:bg-slate-800"
                 onClick={() => setPauseOpen(false)}
               >
                 Отмена
               </button>
-              <button className="rounded-lg bg-slate-200 px-3 py-2 text-sm font-semibold text-slate-950" onClick={pauseCurrent}>
-                Поставить паузу
-              </button>
+              <div className="text-xs text-slate-500">
+                Пауза остановит текущую запись и запустит новую “без задачи”.
+              </div>
             </div>
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Deadlines */}
@@ -606,116 +699,68 @@ export default function TodayPage() {
         </div>
 
         {deadlineTasks.length === 0 ? (
-          <div className="mt-2 text-sm text-slate-400">Пока пусто. Дедлайн можно добавить в правке задачи.</div>
+          <div className="mt-2 text-sm text-slate-400">
+            Пока пусто. Дедлайн можно добавить в правке задачи.
+          </div>
         ) : (
           <div className="mt-3 grid gap-2">
-            {deadlineTasks.map((t) => {
-              const dl = t.deadlineAt!;
-              const ymd = ymdFromMs(dl);
-              const hhmm = hhmmFromMs(dl);
-
-              return (
-                <div key={t.id} className="rounded-lg border border-slate-800 bg-slate-900 p-2">
-                  <div className="flex flex-wrap items-start justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="truncate text-sm text-slate-200">{t.title}</div>
-                      <div className="text-xs text-slate-500">
-                        {ymd} {hhmm} • {fmtDeadlineCountdown(dl, nowMs)}
-                        {t.plannedDate ? ` • в плане: ${t.plannedDate}${t.plannedStart ? " " + t.plannedStart : ""}` : ""}
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-2">
-                      <button
-                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
-                        title="Запланировать на сегодня (без времени)"
-                        onClick={() => updateTask(t.id, { plannedDate: today, plannedStart: null })}
-                      >
-                        На сегодня
-                      </button>
-                      <button
-                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
-                        title="Сделать жёсткой на время дедлайна"
-                        onClick={() => updateTask(t.id, { plannedDate: ymd, plannedStart: hhmm })}
-                      >
-                        Жёстк.
-                      </button>
-                      <button
-                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
-                        title="Правка"
-                        onClick={() => beginTaskEdit(t.id)}
-                      >
-                        ✎
-                      </button>
-                      <button
-                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
-                        title="Готово"
-                        onClick={() => toggleDone(t.id)}
-                      >
-                        ✓
-                      </button>
-                      <button
-                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
-                        title="Удалить"
-                        onClick={() => deleteTask(t.id)}
-                      >
-                        🗑
-                      </button>
-                    </div>
-                  </div>
-
-                  {editingTaskId === t.id ? <TaskEditPanel /> : null}
-                </div>
-              );
-            })}
+            {deadlineTasks.slice(0, 12).map((t) => (
+              <DeadlineRow key={t.id} t={t} />
+            ))}
           </div>
         )}
       </div>
 
-      {/* Hard & Flex */}
-      <div className="grid gap-3 lg:grid-cols-2">
+      {/* Today lists */}
+      <div className="grid gap-3 md:grid-cols-2">
+        {/* Hard */}
         <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-lg font-semibold">Жёсткие задачи</div>
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">Жёсткие задачи</div>
             <div className="text-xs text-slate-500">plannedStart ≠ null</div>
           </div>
 
-          <div className="mt-3 grid gap-2 md:grid-cols-[1fr,110px,110px,150px,auto] md:items-end">
+          <div className="mt-2 flex flex-wrap items-end gap-2">
             <input
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              placeholder="Новая жёсткая задача..."
-              value={hardTitle}
-              onChange={(e) => setHardTitle(e.target.value)}
+              className="h-10 flex-1 min-w-[220px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
+              value={newHardTitle}
+              onChange={(e) => setNewHardTitle(e.target.value)}
+              placeholder="Новая жёсткая задача…"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addHardTask();
+              }}
             />
 
             <input
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              value={hardTime}
-              onChange={(e) => setHardTime(e.target.value)}
-              placeholder="11:00"
+              type="time"
+              className="h-10 w-[110px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
+              value={newHardStart}
+              onChange={(e) => setNewHardStart(e.target.value)}
             />
 
             <input
               type="number"
-              min={0}
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              value={hardEstimate}
-              onChange={(e) => setHardEstimate(Number(e.target.value))}
-              title="оценка (мин)"
+              className="h-10 w-[110px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
+              value={newHardEstimate}
+              onChange={(e) => setNewHardEstimate(e.target.value)}
+              title="Оценка (план): сколько минут примерно займёт. Нужна для планирования и ощущения объёма дня."
             />
 
             <select
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              value={hardPriority}
-              onChange={(e) => setHardPriority(Number(e.target.value) as any)}
-              title="приоритет"
+              className="h-10 w-[150px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
+              value={newHardPriority}
+              onChange={(e) => setNewHardPriority(Number(e.target.value) as any)}
             >
               <option value={1}>Высокий</option>
               <option value={2}>Средний</option>
               <option value={3}>Низкий</option>
             </select>
 
-            <button className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-950" onClick={createHardTask}>
+            <button
+              className="h-10 rounded-lg bg-slate-200 px-4 text-sm font-semibold text-slate-950 disabled:opacity-40"
+              disabled={!newHardTitle.trim()}
+              onClick={addHardTask}
+            >
               Добавить
             </button>
           </div>
@@ -724,52 +769,62 @@ export default function TodayPage() {
             <div className="text-xs text-slate-400">Дедлайн (опционально)</div>
             <input
               type="datetime-local"
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              value={hardDeadline}
-              onChange={(e) => setHardDeadline(e.target.value)}
+              className="h-10 rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
+              value={newHardDeadline}
+              onChange={(e) => setNewHardDeadline(e.target.value)}
             />
           </div>
 
           <div className="mt-3 grid gap-2">
-            {hardTasks.length === 0 ? <div className="text-sm text-slate-400">Пока пусто</div> : hardTasks.map((t) => <TaskRow key={t.id} t={t} />)}
+            {hardToday.length === 0 ? (
+              <div className="text-sm text-slate-400">Пока пусто</div>
+            ) : (
+              hardToday.map((t) => <TaskRow key={t.id} t={t} />)
+            )}
           </div>
         </div>
 
+        {/* Flex */}
         <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-lg font-semibold">Гибкие задачи</div>
+          <div className="flex items-center justify-between">
+            <div className="font-semibold">Гибкие задачи</div>
             <div className="text-xs text-slate-500">plannedStart = null</div>
           </div>
 
-          <div className="mt-3 grid gap-2 md:grid-cols-[1fr,110px,150px,auto] md:items-end">
+          <div className="mt-2 flex flex-wrap items-end gap-2">
             <input
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              placeholder="Новая гибкая задача..."
-              value={flexTitle}
-              onChange={(e) => setFlexTitle(e.target.value)}
+              className="h-10 flex-1 min-w-[220px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
+              value={newFlexTitle}
+              onChange={(e) => setNewFlexTitle(e.target.value)}
+              placeholder="Новая гибкая задача…"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addFlexTask();
+              }}
             />
 
             <input
               type="number"
-              min={0}
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              value={flexEstimate}
-              onChange={(e) => setFlexEstimate(Number(e.target.value))}
-              title="оценка (мин)"
+              className="h-10 w-[110px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
+              value={newFlexEstimate}
+              onChange={(e) => setNewFlexEstimate(e.target.value)}
+              title="Оценка (план): сколько минут примерно займёт"
             />
 
             <select
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              value={flexPriority}
-              onChange={(e) => setFlexPriority(Number(e.target.value) as any)}
-              title="приоритет"
+              className="h-10 w-[150px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
+              value={newFlexPriority}
+              onChange={(e) => setNewFlexPriority(Number(e.target.value) as any)}
             >
               <option value={1}>Высокий</option>
               <option value={2}>Средний</option>
               <option value={3}>Низкий</option>
             </select>
 
-            <button className="rounded-lg bg-slate-200 px-4 py-2 text-sm font-semibold text-slate-950" onClick={createFlexTask}>
+            <button
+              className="h-10 rounded-lg bg-slate-200 px-4 text-sm font-semibold text-slate-950 disabled:opacity-40"
+              disabled={!newFlexTitle.trim()}
+              onClick={addFlexTask}
+            >
               Добавить
             </button>
           </div>
@@ -778,55 +833,48 @@ export default function TodayPage() {
             <div className="text-xs text-slate-400">Дедлайн (опционально)</div>
             <input
               type="datetime-local"
-              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm"
-              value={flexDeadline}
-              onChange={(e) => setFlexDeadline(e.target.value)}
+              className="h-10 rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm"
+              value={newFlexDeadline}
+              onChange={(e) => setNewFlexDeadline(e.target.value)}
             />
           </div>
 
           <div className="mt-3 grid gap-2">
-            {flexTasks.length === 0 ? <div className="text-sm text-slate-400">Пока пусто</div> : flexTasks.map((t) => <TaskRow key={t.id} t={t} />)}
+            {flexToday.length === 0 ? (
+              <div className="text-sm text-slate-400">Пока пусто</div>
+            ) : (
+              flexToday.map((t) => <TaskRow key={t.id} t={t} />)
+            )}
           </div>
         </div>
       </div>
 
-      {/* Done */}
+      {/* Done today */}
       <details className="rounded-xl border border-slate-800 bg-slate-950 p-3">
-        <summary className="cursor-pointer text-lg font-semibold text-slate-200">
-          Выполнено сегодня <span className="text-sm font-normal text-slate-500">({doneToday.length})</span>
+        <summary className="cursor-pointer font-semibold text-slate-200">
+          Выполнено сегодня <span className="text-slate-500">({doneToday.length})</span>
         </summary>
-
         <div className="mt-3 grid gap-2">
           {doneToday.length === 0 ? (
-            <div className="text-sm text-slate-400">Пока нет</div>
+            <div className="text-sm text-slate-400">Пока пусто</div>
           ) : (
             doneToday.map((t) => (
-              <div key={t.id} className="flex items-center justify-between gap-2 rounded-lg border border-slate-800 bg-slate-900 p-2">
-                <div className="min-w-0">
-                  <div className="truncate text-sm text-slate-200">{t.title}</div>
-                  <div className="text-xs text-slate-500">
-                    {t.plannedStart ? `время ${t.plannedStart} • ` : ""}
-                    приоритет: {prioLabel(t.priority)}
-                    {t.deadlineAt ? ` • дедлайн: ${ymdFromMs(t.deadlineAt)} ${hhmmFromMs(t.deadlineAt)}` : ""}
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
+              <div key={t.id} className="rounded-lg border border-slate-800 bg-slate-900 p-2">
+                <div className="text-sm text-slate-200">{t.title}</div>
+                <div className="mt-2 flex items-center gap-2">
                   <button
-                    className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
-                    title="Вернуть в TODO"
+                    className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
                     onClick={() => toggleDone(t.id)}
                   >
-                    ↩︎
+                    Вернуть в todo
                   </button>
                   <button
-                    className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
-                    title="Правка"
+                    className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
                     onClick={() => beginTaskEdit(t.id)}
                   >
-                    ✎
+                    Правка
                   </button>
                 </div>
-
                 {editingTaskId === t.id ? <TaskEditPanel /> : null}
               </div>
             ))
