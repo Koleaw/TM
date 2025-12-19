@@ -341,22 +341,38 @@ function TaskRow(props: {
 
 function DeadlineRow(props: {
   t: Task;
+  today: string;
   isEditing: boolean;
   onBeginEdit: (taskId: ID) => void;
   onToggleDone: (taskId: ID) => void;
+  onDelete: (taskId: ID) => void;
   editPanel: React.ReactNode;
 }) {
-  const { t, isEditing, onBeginEdit, onToggleDone, editPanel } = props;
+  const { t, today, isEditing, onBeginEdit, onToggleDone, onDelete, editPanel } = props;
+
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-sm font-medium text-slate-100">{t.title}</div>
           <div className="mt-0.5 text-xs text-slate-400">
-            дедлайн {t.deadlineAt ? fmtCountdown(t.deadlineAt) : "—"} • план: {t.plannedDate ?? "—"}
+            дедлайн {t.deadlineAt ? fmtCountdown(t.deadlineAt) : "—"}
+            {t.plannedDate ? ` • в плане: ${t.plannedDate}${t.plannedStart ? ` ${t.plannedStart}` : ""}` : " • не запланировано"}
+            {` • приоритет: ${prioLabel(t.priority)}`}
           </div>
         </div>
+
         <div className="flex items-center gap-2">
+          {t.plannedDate !== today ? (
+            <button
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
+              onClick={() => moveTask(t.id, today, t.plannedStart ?? null)}
+              title="Добавить в план на сегодня"
+            >
+              В сегодня
+            </button>
+          ) : null}
+
           <button
             className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
             onClick={() => onBeginEdit(t.id)}
@@ -364,12 +380,21 @@ function DeadlineRow(props: {
           >
             ✎
           </button>
+
           <button
             className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
             onClick={() => onToggleDone(t.id)}
             title="Закрыть/открыть"
           >
             ✓
+          </button>
+
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+            onClick={() => onDelete(t.id)}
+            title="Удалить"
+          >
+            🗑
           </button>
         </div>
       </div>
@@ -388,10 +413,11 @@ export default function TodayPage() {
   const yesterday = ymdAddDays(today, -1);
   const tomorrow = ymdAddDays(today, 1);
 
-  // timer ticking
-  const [, setTick] = useState(0);
+  // timer ticking (for live elapsed time label)
+  const [tickMs, setTickMs] = useState(0);
   useEffect(() => {
-    const id = window.setInterval(() => setTick((x) => x + 1), 1000);
+    setTickMs(Date.now());
+    const id = window.setInterval(() => setTickMs(Date.now()), 500);
     return () => window.clearInterval(id);
   }, []);
 
@@ -406,7 +432,6 @@ export default function TodayPage() {
   const pauseTimeTypeId = pauseTT?.id ?? "tt_pause"; // best-effort fallback
 
   const active = s.activeTimer;
-  const activeLogStartedAt = active?.startedAt ?? null;
 
   const [timerTimeTypeId, setTimerTimeTypeId] = useState<ID | "">("");
   const [activeNote, setActiveNote] = useState("");
@@ -424,12 +449,15 @@ export default function TodayPage() {
     return t ? t.title : "(задача не найдена)";
   }, [active, pauseTimeTypeId, s.tasks]);
 
-  const timerStatus = useMemo(() => {
-    if (!active) return "простой";
-    if (!activeLogStartedAt) return "идёт…";
-    const elapsed = fmtElapsed(Date.now() - activeLogStartedAt);
-    return `идёт… (${elapsed})`;
-  }, [active, activeLogStartedAt]);
+  const elapsedMs = useMemo(() => {
+    if (!active) return 0;
+    const now = tickMs || Date.now();
+    return Math.max(0, now - active.startedAt);
+  }, [active, tickMs]);
+
+  const elapsedLabel = useMemo(() => fmtElapsed(elapsedMs), [elapsedMs]);
+
+  const timerStatus = active ? `идёт… (${elapsedLabel})` : "простой";
 
   function stopCurrent() {
     if (!active) return;
@@ -605,10 +633,10 @@ export default function TodayPage() {
 
   const deadlines = useMemo(
     () =>
-      tasksToday
-        .filter((t) => typeof t.deadlineAt === "number")
+      s.tasks
+        .filter((t) => t.status !== "done" && typeof t.deadlineAt === "number")
         .sort((a, b) => (a.deadlineAt ?? 0) - (b.deadlineAt ?? 0)),
-    [tasksToday]
+    [s.tasks]
   );
 
   const hardToday = useMemo(
@@ -619,7 +647,13 @@ export default function TodayPage() {
     [tasksToday]
   );
 
-  const flexToday = useMemo(() => tasksToday.filter((t) => !t.plannedStart), [tasksToday]);
+  const flexToday = useMemo(
+    () =>
+      tasksToday
+        .filter((t) => !t.plannedStart)
+        .sort((a, b) => (a.priority ?? 2) - (b.priority ?? 2) || b.updatedAt - a.updatedAt),
+    [tasksToday]
+  );
 
   // ---------------- UI
   return (
@@ -744,13 +778,19 @@ export default function TodayPage() {
           {deadlines.length === 0 ? (
             <div className="text-sm text-slate-500">Пока пусто</div>
           ) : (
-            deadlines.map((t) => (
+            deadlines.slice(0, 12).map((t) => (
               <DeadlineRow
                 key={t.id}
                 t={t}
+                today={today}
                 isEditing={editingTaskId === t.id}
                 onBeginEdit={(id) => setEditingTaskId(id)}
                 onToggleDone={(id) => toggleDone(id)}
+                onDelete={(id) => {
+                  if (!window.confirm("Удалить задачу?")) return;
+                  deleteTask(id);
+                  if (editingTaskId === id) setEditingTaskId(null);
+                }}
                 editPanel={editingTaskId === t.id ? editPanelNode : null}
               />
             ))
@@ -764,44 +804,51 @@ export default function TodayPage() {
         <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
           <div className="flex items-baseline justify-between">
             <div className="text-lg font-semibold text-slate-100">Жёсткие задачи</div>
-            <div className="text-xs text-slate-500">plannedStart ≠ null</div>
           </div>
 
-          <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_96px_96px_auto] md:items-center">
+          <div className="mt-3 flex flex-wrap items-end gap-2">
             <input
-              className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm outline-none focus:border-slate-600"
+              className="h-10 flex-1 min-w-[220px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
               value={newHardTitle}
               onChange={(e) => setNewHardTitle(e.target.value)}
               placeholder="Новая жёсткая задача…"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addHardTask();
+              }}
             />
+
             <input
               type="time"
-              className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm outline-none focus:border-slate-600"
+              className="h-10 w-[110px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
               value={newHardStart}
               onChange={(e) => setNewHardStart(e.target.value)}
             />
+
             <input
-              type="number"
-              min={0}
-              className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm outline-none focus:border-slate-600"
+              className="h-10 w-[110px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
               value={newHardEstimate}
               onChange={(e) => setNewHardEstimate(e.target.value)}
               placeholder="0"
+              inputMode="numeric"
             />
-            <div className="flex items-center gap-2">
-              <select
-                className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm outline-none focus:border-slate-600"
-                value={newHardPriority}
-                onChange={(e) => setNewHardPriority(e.target.value)}
-              >
-                <option value="1">Высокий</option>
-                <option value="2">Средний</option>
-                <option value="3">Низкий</option>
-              </select>
-              <button className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-4 text-sm hover:bg-slate-800" onClick={addHardTask}>
-                Добавить
-              </button>
-            </div>
+
+            <select
+              className="h-10 w-[150px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
+              value={newHardPriority}
+              onChange={(e) => setNewHardPriority(e.target.value)}
+            >
+              <option value="1">Высокий</option>
+              <option value="2">Средний</option>
+              <option value="3">Низкий</option>
+            </select>
+
+            <button
+              className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-4 text-sm hover:bg-slate-800 disabled:opacity-40"
+              onClick={addHardTask}
+              disabled={!newHardTitle.trim()}
+            >
+              Добавить
+            </button>
           </div>
 
           <div className="mt-3 space-y-2">
@@ -833,7 +880,6 @@ export default function TodayPage() {
         <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
           <div className="flex items-baseline justify-between">
             <div className="text-lg font-semibold text-slate-100">Гибкие задачи</div>
-            <div className="text-xs text-slate-500">plannedStart = null</div>
           </div>
 
           <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_96px_auto] md:items-center">
