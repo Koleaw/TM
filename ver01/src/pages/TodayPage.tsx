@@ -19,6 +19,8 @@ import {
 
 // ------------------------------
 // helpers
+const isFiniteNumber = (v: unknown): v is number => typeof v === "number" && isFinite(v as number);
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -32,7 +34,7 @@ function fmtElapsed(ms: number) {
 }
 
 function fmtDuration(min: number) {
-  if (!Number.isFinite(min) || min <= 0) return "";
+  if (!isFiniteNumber(min) || min <= 0) return "";
   const h = Math.floor(min / 60);
   const m = min % 60;
   if (h && m) return `${h} ч ${m} мин`;
@@ -41,6 +43,7 @@ function fmtDuration(min: number) {
 }
 
 function fmtCountdown(deadlineAt: number) {
+  if (!isFiniteNumber(deadlineAt)) return \"—\";
   const diff = deadlineAt - Date.now();
   const sign = diff < 0 ? "-" : "";
   const abs = Math.abs(diff);
@@ -79,16 +82,38 @@ function toLocalDateTimeInput(ms: number) {
 }
 
 function parseDeadlineInput(v: string): number | null {
-  const ts = Date.parse(v);
-  if (!Number.isFinite(ts)) return null;
+  const s = (v ?? "").trim();
+  if (!s) return null;
+
+  // input[type=datetime-local] обычно даёт:
+  //   YYYY-MM-DDTHH:MM
+  // иногда (в зависимости от браузера) может прийти:
+  //   YYYY-MM-DD HH:MM
+  // или просто YYYY-MM-DD (если тип/ввод отличается)
+  const m = s.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/
+  );
+  if (!m) return null;
+
+  const year = Number(m[1]);
+  const month = Number(m[2]) - 1;
+  const day = Number(m[3]);
+  const hour = m[4] != null ? Number(m[4]) : 0;
+  const minute = m[5] != null ? Number(m[5]) : 0;
+  const second = m[6] != null ? Number(m[6]) : 0;
+
+  const dt = new Date(year, month, day, hour, minute, second, 0);
+  const ts = dt.getTime();
+  if (!isFiniteNumber(ts)) return null;
   return ts;
 }
+
 
 function parseEstimate(v: string): number | null {
   const s = v.trim();
   if (!s) return null;
   const n = Number(s);
-  if (!Number.isFinite(n) || n < 0) return null;
+  if (!isFiniteNumber(n) || n < 0) return null;
   return Math.round(n);
 }
 
@@ -376,7 +401,7 @@ function DeadlineRow(props: {
   const [newSteakTitle, setNewSteakTitle] = useState("");
   const [newSteakEstimate, setNewSteakEstimate] = useState("0");
 
-  const dueAt = typeof t.deadlineAt === "number" ? t.deadlineAt : null;
+  const dueAt = isFiniteNumber(t.deadlineAt) ? t.deadlineAt : null;
 
   const totalEst =
     children.length > 0
@@ -890,7 +915,7 @@ export default function TodayPage() {
     const dl = parseDeadlineInput(newFlexDeadline);
 
     // Если указан дедлайн — создаём "проект" в блоке дедлайнов (НЕ в плане дня).
-    if (typeof dl === "number") {
+    if (isFiniteNumber(dl)) {
       createTask(newFlexTitle, {
         plannedDate: null,
         plannedStart: null,
@@ -1003,7 +1028,7 @@ export default function TodayPage() {
         .filter(
           (t) =>
             t.status !== "done" &&
-            typeof t.deadlineAt === "number" &&
+            isFiniteNumber(t.deadlineAt) &&
             (t as any).parentId == null &&
             t.plannedDate == null
         )
@@ -1016,7 +1041,9 @@ export default function TodayPage() {
     for (const t of s.tasks) {
       const pid = (t as any).parentId;
       if (!pid) continue;
-      (m[String(pid)] ??= []).push(t);
+      const key = String(pid);
+      if (!m[key]) m[key] = [];
+      m[key].push(t);
     }
     for (const pid of Object.keys(m)) {
       m[pid].sort(
