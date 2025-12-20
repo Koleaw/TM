@@ -72,7 +72,9 @@ function prioBarClass(p: number) {
 
 
 function toLocalDateTimeInput(ms: number) {
-  const d = new Date(ms);
+  const t = Number(ms);
+  if (!Number.isFinite(t)) return "";
+  const d = new Date(t);
   const y = d.getFullYear();
   const mo = pad2(d.getMonth() + 1);
   const da = pad2(d.getDate());
