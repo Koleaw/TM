@@ -19,6 +19,8 @@ import {
 
 // ------------------------------
 // helpers
+const isFiniteNumber = (v: unknown): v is number => typeof v === "number" && isFinite(v as number);
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -32,7 +34,7 @@ function fmtElapsed(ms: number) {
 }
 
 function fmtDuration(min: number) {
-  if (!Number.isFinite(min) || min <= 0) return "";
+  if (!isFiniteNumber(min) || min <= 0) return "";
   const h = Math.floor(min / 60);
   const m = min % 60;
   if (h && m) return `${h} ч ${m} мин`;
@@ -41,6 +43,7 @@ function fmtDuration(min: number) {
 }
 
 function fmtCountdown(deadlineAt: number) {
+  if (!isFiniteNumber(deadlineAt)) return "—";
   const diff = deadlineAt - Date.now();
   const sign = diff < 0 ? "-" : "";
   const abs = Math.abs(diff);
@@ -61,6 +64,13 @@ function prioLabel(p: number) {
   return "Низкий";
 }
 
+function prioBarClass(p: number) {
+  if (p === 1) return "bg-rose-500/80";
+  if (p === 2) return "bg-amber-400/80";
+  return "bg-emerald-500/70";
+}
+
+
 function toLocalDateTimeInput(ms: number) {
   const d = new Date(ms);
   const y = d.getFullYear();
@@ -72,16 +82,38 @@ function toLocalDateTimeInput(ms: number) {
 }
 
 function parseDeadlineInput(v: string): number | null {
-  const ts = Date.parse(v);
-  if (!Number.isFinite(ts)) return null;
+  const s = (v ?? "").trim();
+  if (!s) return null;
+
+  // input[type=datetime-local] обычно даёт:
+  //   YYYY-MM-DDTHH:MM
+  // иногда (в зависимости от браузера) может прийти:
+  //   YYYY-MM-DD HH:MM
+  // или просто YYYY-MM-DD (если тип/ввод отличается)
+  const m = s.match(
+    /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/
+  );
+  if (!m) return null;
+
+  const year = Number(m[1]);
+  const month = Number(m[2]) - 1;
+  const day = Number(m[3]);
+  const hour = m[4] != null ? Number(m[4]) : 0;
+  const minute = m[5] != null ? Number(m[5]) : 0;
+  const second = m[6] != null ? Number(m[6]) : 0;
+
+  const dt = new Date(year, month, day, hour, minute, second, 0);
+  const ts = dt.getTime();
+  if (!isFiniteNumber(ts)) return null;
   return ts;
 }
+
 
 function parseEstimate(v: string): number | null {
   const s = v.trim();
   if (!s) return null;
   const n = Number(s);
-  if (!Number.isFinite(n) || n < 0) return null;
+  if (!isFiniteNumber(n) || n < 0) return null;
   return Math.round(n);
 }
 
@@ -267,7 +299,8 @@ function TaskRow(props: {
   if (t.plannedStart) metaParts.push(t.plannedStart);
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
+    <div className="relative rounded-xl border border-slate-800 bg-slate-950 p-3 pl-4">
+      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${prioBarClass(t.priority)}`} />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
@@ -334,29 +367,151 @@ function TaskRow(props: {
         </div>
       </div>
 
-      {isEditing ? editPanel : null}
+      {editingTaskId === t.id ? editPanelNode : null}
     </div>
   );
 }
 
 function DeadlineRow(props: {
   t: Task;
-  isEditing: boolean;
+  children: Task[];
+  minutesByTaskId: Record<string, number>;
+  today: string;
+  editingTaskId: ID | null;
+  editPanelNode: React.ReactNode;
+  onStartOrSwitch: (taskId: ID) => void;
   onBeginEdit: (taskId: ID) => void;
   onToggleDone: (taskId: ID) => void;
-  editPanel: React.ReactNode;
+  onDelete: (taskId: ID) => void;
 }) {
-  const { t, isEditing, onBeginEdit, onToggleDone, editPanel } = props;
+  const {
+    t,
+    children,
+    minutesByTaskId,
+    today,
+    editingTaskId,
+    editPanelNode,
+    onStartOrSwitch,
+    onBeginEdit,
+    onToggleDone,
+    onDelete,
+  } = props;
+
+  const [open, setOpen] = useState(false);
+  const [newSteakTitle, setNewSteakTitle] = useState("");
+  const [newSteakEstimate, setNewSteakEstimate] = useState("0");
+
+  const dueAt = isFiniteNumber(t.deadlineAt) ? t.deadlineAt : null;
+
+  const totalEst =
+    children.length > 0
+      ? children.reduce((sum, c) => sum + (c.estimateMin ?? 0), 0)
+      : (t.estimateMin ?? 0);
+
+  const spentMin = children.reduce((sum, c) => sum + (minutesByTaskId[c.id] ?? 0), 0);
+  const remainingMin = totalEst > 0 ? Math.max(0, totalEst - spentMin) : null;
+
+  const daysLeft =
+    dueAt == null ? null : Math.max(0, Math.ceil((dueAt - Date.now()) / (24 * 60 * 60 * 1000)));
+
+  const bufferDays = 2;
+  const workDays = daysLeft == null ? null : Math.max(1, daysLeft - bufferDays);
+  const recPerDay =
+    remainingMin != null && workDays != null ? Math.ceil(remainingMin / workDays) : null;
+
+  function addSteak(plannedToday: boolean) {
+    const title = newSteakTitle.trim();
+    if (!title) return;
+
+    createTask(title, {
+      parentId: t.id as any,
+      plannedDate: plannedToday ? today : null,
+      plannedStart: null,
+      estimateMin: parseEstimate(newSteakEstimate) ?? 0,
+      priority: t.priority,
+      deadlineAt: null,
+    });
+
+    setNewSteakTitle("");
+    setNewSteakEstimate("0");
+    setOpen(true);
+  }
+
+  function addOneShotSteakToday() {
+    // Для маленьких дедлайнов: один бифштекс на сегодня.
+    createTask(t.title, {
+      parentId: t.id as any,
+      plannedDate: today,
+      plannedStart: null,
+      estimateMin: t.estimateMin ?? 0,
+      priority: t.priority,
+      deadlineAt: null,
+    });
+    setOpen(true);
+  }
+
+  function moveSteakToToday(id: ID) {
+    moveTask(id, today, null);
+  }
+
+  function moveSteakToPool(id: ID) {
+    moveTask(id, null, null);
+  }
+
+  function reorderSteak(id: ID, dir: -1 | 1) {
+    const idx = children.findIndex((c) => c.id === id);
+    if (idx < 0) return;
+    const j = idx + dir;
+    if (j < 0 || j >= children.length) return;
+
+    const a = children[idx];
+    const b = children[j];
+
+    const ao = (a as any).sortOrder ?? idx;
+    const bo = (b as any).sortOrder ?? j;
+
+    updateTask(a.id, { sortOrder: bo as any });
+    updateTask(b.id, { sortOrder: ao as any });
+  }
+
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3">
+    <div className="relative rounded-xl border border-slate-800 bg-slate-950 p-3 pl-4">
+      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${prioBarClass(t.priority)}`} />
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-slate-100">{t.title}</div>
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded-md border border-slate-800 bg-slate-950 px-2 py-1 text-xs hover:bg-slate-800"
+              onClick={() => setOpen((v) => !v)}
+              title={open ? "Свернуть" : "Раскрыть"}
+            >
+              {open ? "▾" : "▸"}
+            </button>
+            <div className="truncate text-sm font-medium text-slate-100">{t.title}</div>
+          </div>
+
           <div className="mt-0.5 text-xs text-slate-400">
-            дедлайн {t.deadlineAt ? fmtCountdown(t.deadlineAt) : "—"} • план: {t.plannedDate ?? "—"}
+            дедлайн {dueAt ? fmtCountdown(dueAt) : "—"}
+            {` • приоритет: ${prioLabel(t.priority)}`}
+            {totalEst > 0 ? ` • оценка: ${fmtDuration(totalEst)}` : ""}
+            {spentMin > 0 ? ` • потрачено: ${fmtDuration(spentMin)}` : ""}
+            {remainingMin != null ? ` • осталось: ${fmtDuration(remainingMin)}` : ""}
+            {recPerDay != null ? ` • рекоменд.: ${fmtDuration(recPerDay)} / день` : ""}
+            {daysLeft != null ? ` • дней до дедлайна: ${daysLeft}` : ""}
           </div>
         </div>
+
         <div className="flex items-center gap-2">
+          {children.length === 0 ? (
+            <button
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
+              onClick={addOneShotSteakToday}
+              title="Быстро: один бифштекс на сегодня"
+            >
+              В сегодня
+            </button>
+          ) : null}
+
           <button
             className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
             onClick={() => onBeginEdit(t.id)}
@@ -364,6 +519,225 @@ function DeadlineRow(props: {
           >
             ✎
           </button>
+
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+            onClick={() => onToggleDone(t.id)}
+            title="Закрыть/открыть проект"
+          >
+            ✓
+          </button>
+
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+            onClick={() => onDelete(t.id)}
+            title="Удалить проект"
+          >
+            🗑
+          </button>
+        </div>
+      </div>
+
+      {open ? (
+        <div className="mt-3 space-y-2">
+          <div className="flex flex-wrap items-center gap-2 rounded-lg border border-slate-800 bg-slate-950 p-2">
+            <input
+              className="h-10 min-w-[220px] flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
+              placeholder="Новый бифштекс…"
+              value={newSteakTitle}
+              onChange={(e) => setNewSteakTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addSteak(false);
+              }}
+            />
+            <input
+              className="h-10 w-[120px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
+              placeholder="оценка"
+              value={newSteakEstimate}
+              onChange={(e) => setNewSteakEstimate(e.target.value)}
+            />
+            <button
+              className="h-10 rounded-lg bg-slate-100 px-3 text-sm font-semibold text-slate-950 hover:bg-white"
+              onClick={() => addSteak(false)}
+              title="Добавить бифштекс (в пул дедлайна)"
+            >
+              Добавить
+            </button>
+            <button
+              className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm font-semibold text-slate-100 hover:bg-slate-800"
+              onClick={() => addSteak(true)}
+              title="Добавить бифштекс и сразу в сегодня"
+            >
+              + в сегодня
+            </button>
+          </div>
+
+          {children.length === 0 ? (
+            <div className="text-sm text-slate-500">Пока нет бифштексов</div>
+          ) : (
+            children.map((c) => {
+              const inToday = c.plannedDate === today;
+              const spent = minutesByTaskId[c.id] ?? 0;
+              const est = c.estimateMin ?? 0;
+
+              return (
+                <div
+                  key={c.id}
+                  className="relative rounded-xl border border-slate-800 bg-slate-950 p-3 pl-4"
+                >
+                  <div
+                    className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${prioBarClass(
+                      c.priority
+                    )}`}
+                  />
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="truncate text-sm font-medium text-slate-100">
+                        {c.title}
+                        {inToday ? (
+                          <span className="ml-2 text-xs text-emerald-300">• в плане</span>
+                        ) : null}
+                      </div>
+                      <div className="mt-0.5 text-xs text-slate-400">
+                        {`приоритет: ${prioLabel(c.priority)}`}
+                        {est > 0 ? ` • оценка: ${fmtDuration(est)}` : ""}
+                        {spent > 0 ? ` • потрачено: ${fmtDuration(spent)}` : ""}
+                        {c.status === "done" ? " • закрыто" : ""}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <button
+                        className="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950"
+                        onClick={() => onStartOrSwitch(c.id)}
+                        title="Старт / переключиться"
+                      >
+                        Старт
+                      </button>
+
+                      {!inToday ? (
+                        <button
+                          className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
+                          onClick={() => moveSteakToToday(c.id)}
+                          title="Добавить в план на сегодня"
+                        >
+                          В сегодня
+                        </button>
+                      ) : (
+                        <button
+                          className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
+                          onClick={() => moveSteakToPool(c.id)}
+                          title="Убрать из плана (вернуть в пул дедлайна)"
+                        >
+                          Убрать
+                        </button>
+                      )}
+
+                      <button
+                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+                        onClick={() => reorderSteak(c.id, -1)}
+                        title="Выше"
+                      >
+                        ↑
+                      </button>
+                      <button
+                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+                        onClick={() => reorderSteak(c.id, 1)}
+                        title="Ниже"
+                      >
+                        ↓
+                      </button>
+
+                      <button
+                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+                        onClick={() => onBeginEdit(c.id)}
+                        title="Редактировать"
+                      >
+                        ✎
+                      </button>
+
+                      <button
+                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+                        onClick={() => onToggleDone(c.id)}
+                        title="Закрыть/открыть"
+                      >
+                        ✓
+                      </button>
+
+                      <button
+                        className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+                        onClick={() => onDelete(c.id)}
+                        title="Удалить"
+                      >
+                        🗑
+                      </button>
+                    </div>
+                  </div>
+                {editingTaskId === c.id ? editPanelNode : null}
+                </div>
+              );
+            })
+          )}
+        </div>
+      ) : null}
+
+      {editingTaskId === t.id ? editPanelNode : null}
+    </div>
+  );
+}
+
+
+function BacklogRow(props: {
+  t: Task;
+  today: string;
+  isEditing: boolean;
+  onStartOrSwitch: (taskId: ID) => void;
+  onBeginEdit: (taskId: ID) => void;
+  onToggleDone: (taskId: ID) => void;
+  onDelete: (taskId: ID) => void;
+  editPanel: React.ReactNode;
+}) {
+  const { t, today, isEditing, onStartOrSwitch, onBeginEdit, onToggleDone, onDelete, editPanel } = props;
+
+  return (
+    <div className="relative rounded-xl border border-slate-800 bg-slate-950 p-3 pl-4">
+      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${prioBarClass(t.priority)}`} />
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-slate-100">{t.title}</div>
+          <div className="mt-0.5 text-xs text-slate-400">
+            {`приоритет: ${prioLabel(t.priority)}`}
+            {typeof t.estimateMin === "number" && t.estimateMin > 0
+              ? ` • оценка: ${fmtDuration(t.estimateMin)}`
+              : ""}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            className="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950"
+            onClick={() => onStartOrSwitch(t.id)}
+            title="Старт / переключиться"
+          >
+            Старт
+          </button>
+
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
+            onClick={() => moveTask(t.id, today, null)}
+            title="Добавить в план на сегодня"
+          >
+            В сегодня
+          </button>
+
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+            onClick={() => onBeginEdit(t.id)}
+            title="Редактировать"
+          >
+            ✎
+          </button>
+
           <button
             className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
             onClick={() => onToggleDone(t.id)}
@@ -371,10 +745,18 @@ function DeadlineRow(props: {
           >
             ✓
           </button>
+
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+            onClick={() => onDelete(t.id)}
+            title="Удалить"
+          >
+            🗑
+          </button>
         </div>
       </div>
 
-      {isEditing ? editPanel : null}
+      {editingTaskId === t.id ? editPanelNode : null}
     </div>
   );
 }
@@ -388,10 +770,11 @@ export default function TodayPage() {
   const yesterday = ymdAddDays(today, -1);
   const tomorrow = ymdAddDays(today, 1);
 
-  // timer ticking
-  const [, setTick] = useState(0);
+  // timer ticking (for live elapsed time label)
+  const [tickMs, setTickMs] = useState(0);
   useEffect(() => {
-    const id = window.setInterval(() => setTick((x) => x + 1), 1000);
+    setTickMs(Date.now());
+    const id = window.setInterval(() => setTickMs(Date.now()), 500);
     return () => window.clearInterval(id);
   }, []);
 
@@ -406,7 +789,6 @@ export default function TodayPage() {
   const pauseTimeTypeId = pauseTT?.id ?? "tt_pause"; // best-effort fallback
 
   const active = s.activeTimer;
-  const activeLogStartedAt = active?.startedAt ?? null;
 
   const [timerTimeTypeId, setTimerTimeTypeId] = useState<ID | "">("");
   const [activeNote, setActiveNote] = useState("");
@@ -424,12 +806,15 @@ export default function TodayPage() {
     return t ? t.title : "(задача не найдена)";
   }, [active, pauseTimeTypeId, s.tasks]);
 
-  const timerStatus = useMemo(() => {
-    if (!active) return "простой";
-    if (!activeLogStartedAt) return "идёт…";
-    const elapsed = fmtElapsed(Date.now() - activeLogStartedAt);
-    return `идёт… (${elapsed})`;
-  }, [active, activeLogStartedAt]);
+  const elapsedMs = useMemo(() => {
+    if (!active) return 0;
+    const now = tickMs || Date.now();
+    return Math.max(0, now - active.startedAt);
+  }, [active, tickMs]);
+
+  const elapsedLabel = useMemo(() => fmtElapsed(elapsedMs), [elapsedMs]);
+
+  const timerStatus = active ? `идёт… (${elapsedLabel})` : "простой";
 
   function stopCurrent() {
     if (!active) return;
@@ -505,6 +890,9 @@ export default function TodayPage() {
   const [newFlexEstimate, setNewFlexEstimate] = useState("0");
   const [newFlexPriority, setNewFlexPriority] = useState("2");
   const [newFlexDeadline, setNewFlexDeadline] = useState("");
+  const [newBacklogTitle, setNewBacklogTitle] = useState("");
+  const [newBacklogEstimate, setNewBacklogEstimate] = useState("0");
+  const [newBacklogPriority, setNewBacklogPriority] = useState("2");
 
   function addHardTask() {
     if (!newHardTitle.trim()) return;
@@ -523,17 +911,48 @@ export default function TodayPage() {
 
   function addFlexTask() {
     if (!newFlexTitle.trim()) return;
-    createTask(newFlexTitle, {
-      plannedDate: today,
-      plannedStart: null,
-      estimateMin: parseEstimate(newFlexEstimate) ?? 0,
-      priority: Number(newFlexPriority) as any,
-      deadlineAt: parseDeadlineInput(newFlexDeadline),
-    });
+
+    const dl = parseDeadlineInput(newFlexDeadline);
+
+    // Если указан дедлайн — создаём "проект" в блоке дедлайнов (НЕ в плане дня).
+    if (isFiniteNumber(dl)) {
+      createTask(newFlexTitle, {
+        plannedDate: null,
+        plannedStart: null,
+        estimateMin: parseEstimate(newFlexEstimate) ?? 0,
+        priority: Number(newFlexPriority) as any,
+        deadlineAt: dl,
+      });
+    } else {
+      // Обычная гибкая задача — сразу в план на сегодня.
+      createTask(newFlexTitle, {
+        plannedDate: today,
+        plannedStart: null,
+        estimateMin: parseEstimate(newFlexEstimate) ?? 0,
+        priority: Number(newFlexPriority) as any,
+        deadlineAt: null,
+      });
+    }
+
     setNewFlexTitle("");
     setNewFlexEstimate("0");
     setNewFlexPriority("2");
     setNewFlexDeadline("");
+  }
+
+
+  function addBacklogTask() {
+    if (!newBacklogTitle.trim()) return;
+    createTask(newBacklogTitle, {
+      plannedDate: null,
+      plannedStart: null,
+      estimateMin: parseEstimate(newBacklogEstimate) ?? 0,
+      priority: Number(newBacklogPriority) as any,
+      deadlineAt: null,
+    });
+    setNewBacklogTitle("");
+    setNewBacklogEstimate("0");
+    setNewBacklogPriority("2");
   }
 
   // ---------------- Editing
@@ -605,13 +1024,61 @@ export default function TodayPage() {
 
   const deadlines = useMemo(
     () =>
-      tasksToday
-        .filter((t) => typeof t.deadlineAt === "number")
+      s.tasks
+        .filter(
+          (t) =>
+            t.status !== "done" &&
+            isFiniteNumber(t.deadlineAt) &&
+            (t as any).parentId == null &&
+            t.plannedDate == null
+        )
         .sort((a, b) => (a.deadlineAt ?? 0) - (b.deadlineAt ?? 0)),
-    [tasksToday]
+    [s.tasks]
   );
 
-  const hardToday = useMemo(
+  const childrenByParentId = useMemo(() => {
+    const m: Record<string, Task[]> = {};
+    for (const t of s.tasks) {
+      const pid = (t as any).parentId;
+      if (!pid) continue;
+      const key = String(pid);
+      if (!m[key]) m[key] = [];
+      m[key].push(t);
+    }
+    for (const pid of Object.keys(m)) {
+      m[pid].sort(
+        (a, b) =>
+          ((a as any).sortOrder ?? 1e9) - ((b as any).sortOrder ?? 1e9) ||
+          a.createdAt - b.createdAt
+      );
+    }
+    return m;
+  }, [s.tasks]);
+
+  const minutesByTaskId = useMemo(() => {
+    const m: Record<string, number> = {};
+    for (const l of s.timeLogs) {
+      if (!l.taskId) continue;
+      m[l.taskId] = (m[l.taskId] ?? 0) + (l.minutes ?? 0);
+    }
+    return m;
+  }, [s.timeLogs]);
+
+  const backlog = useMemo(
+    () =>
+      s.tasks
+        .filter(
+          (t) =>
+            t.status !== "done" &&
+            t.plannedDate == null &&
+            t.deadlineAt == null &&
+            (t as any).parentId == null
+        )
+        .sort((a, b) => (a.priority ?? 2) - (b.priority ?? 2) || b.updatedAt - a.updatedAt),
+    [s.tasks]
+  );
+
+const hardToday = useMemo(
     () =>
       tasksToday
         .filter((t) => !!t.plannedStart)
@@ -619,7 +1086,13 @@ export default function TodayPage() {
     [tasksToday]
   );
 
-  const flexToday = useMemo(() => tasksToday.filter((t) => !t.plannedStart), [tasksToday]);
+  const flexToday = useMemo(
+    () =>
+      tasksToday
+        .filter((t) => !t.plannedStart)
+        .sort((a, b) => (a.priority ?? 2) - (b.priority ?? 2) || b.updatedAt - a.updatedAt),
+    [tasksToday]
+  );
 
   // ---------------- UI
   return (
@@ -744,15 +1217,24 @@ export default function TodayPage() {
           {deadlines.length === 0 ? (
             <div className="text-sm text-slate-500">Пока пусто</div>
           ) : (
-            deadlines.map((t) => (
+            deadlines.slice(0, 12).map((t) => (
               <DeadlineRow
                 key={t.id}
                 t={t}
-                isEditing={editingTaskId === t.id}
+                children={childrenByParentId[t.id] ?? []}
+                minutesByTaskId={minutesByTaskId}
+                today={today}
+                editingTaskId={editingTaskId}
+                editPanelNode={editPanelNode}
+                                onStartOrSwitch={startOrSwitch}
                 onBeginEdit={(id) => setEditingTaskId(id)}
                 onToggleDone={(id) => toggleDone(id)}
-                editPanel={editingTaskId === t.id ? editPanelNode : null}
-              />
+                onDelete={(id) => {
+                  if (!window.confirm("Удалить задачу?")) return;
+                  deleteTask(id);
+                  if (editingTaskId === id) setEditingTaskId(null);
+                }}
+                              />
             ))
           )}
         </div>
@@ -764,44 +1246,51 @@ export default function TodayPage() {
         <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
           <div className="flex items-baseline justify-between">
             <div className="text-lg font-semibold text-slate-100">Жёсткие задачи</div>
-            <div className="text-xs text-slate-500">plannedStart ≠ null</div>
           </div>
 
-          <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_96px_96px_auto] md:items-center">
+          <div className="mt-3 flex flex-wrap items-end gap-2">
             <input
-              className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm outline-none focus:border-slate-600"
+              className="h-10 flex-1 min-w-[220px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
               value={newHardTitle}
               onChange={(e) => setNewHardTitle(e.target.value)}
               placeholder="Новая жёсткая задача…"
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addHardTask();
+              }}
             />
+
             <input
               type="time"
-              className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm outline-none focus:border-slate-600"
+              className="h-10 w-[110px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
               value={newHardStart}
               onChange={(e) => setNewHardStart(e.target.value)}
             />
+
             <input
-              type="number"
-              min={0}
-              className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm outline-none focus:border-slate-600"
+              className="h-10 w-[110px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
               value={newHardEstimate}
               onChange={(e) => setNewHardEstimate(e.target.value)}
               placeholder="0"
+              inputMode="numeric"
             />
-            <div className="flex items-center gap-2">
-              <select
-                className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm outline-none focus:border-slate-600"
-                value={newHardPriority}
-                onChange={(e) => setNewHardPriority(e.target.value)}
-              >
-                <option value="1">Высокий</option>
-                <option value="2">Средний</option>
-                <option value="3">Низкий</option>
-              </select>
-              <button className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-4 text-sm hover:bg-slate-800" onClick={addHardTask}>
-                Добавить
-              </button>
-            </div>
+
+            <select
+              className="h-10 w-[150px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
+              value={newHardPriority}
+              onChange={(e) => setNewHardPriority(e.target.value)}
+            >
+              <option value="1">Высокий</option>
+              <option value="2">Средний</option>
+              <option value="3">Низкий</option>
+            </select>
+
+            <button
+              className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-4 text-sm hover:bg-slate-800 disabled:opacity-40"
+              onClick={addHardTask}
+              disabled={!newHardTitle.trim()}
+            >
+              Добавить
+            </button>
           </div>
 
           <div className="mt-3 space-y-2">
@@ -833,7 +1322,6 @@ export default function TodayPage() {
         <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
           <div className="flex items-baseline justify-between">
             <div className="text-lg font-semibold text-slate-100">Гибкие задачи</div>
-            <div className="text-xs text-slate-500">plannedStart = null</div>
           </div>
 
           <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-[1fr_96px_auto] md:items-center">
@@ -903,7 +1391,76 @@ export default function TodayPage() {
         </div>
       </div>
 
-      {/* DONE */}
+      
+      {/* BACKLOG */}
+      <div className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+        <div className="flex items-baseline justify-between">
+          <div className="text-lg font-semibold text-slate-100">Беклог</div>
+          <div className="text-xs text-slate-500">без даты и без дедлайна — просто список</div>
+        </div>
+
+        <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-800 bg-slate-950 p-3">
+          <input
+            className="h-10 min-w-[240px] flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
+            placeholder="Новая задача в беклог…"
+            value={newBacklogTitle}
+            onChange={(e) => setNewBacklogTitle(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") addBacklogTask();
+            }}
+          />
+          <input
+            className="h-10 w-[110px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
+            placeholder="оценка"
+            value={newBacklogEstimate}
+            onChange={(e) => setNewBacklogEstimate(e.target.value)}
+          />
+
+          <select
+            className="h-10 w-[150px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
+            value={newBacklogPriority}
+            onChange={(e) => setNewBacklogPriority(e.target.value)}
+            title="Приоритет"
+          >
+            <option value="1">Высокий</option>
+            <option value="2">Средний</option>
+            <option value="3">Низкий</option>
+          </select>
+
+          <button
+            className="h-10 rounded-lg bg-slate-100 px-3 text-sm font-semibold text-slate-950 hover:bg-white"
+            onClick={addBacklogTask}
+          >
+            Добавить
+          </button>
+        </div>
+
+        <div className="mt-3 space-y-2">
+          {backlog.length === 0 ? (
+            <div className="text-sm text-slate-500">Пока пусто</div>
+          ) : (
+            backlog.slice(0, 50).map((t) => (
+              <BacklogRow
+                key={t.id}
+                t={t}
+                today={today}
+                isEditing={editingTaskId === t.id}
+                onStartOrSwitch={startOrSwitch}
+                onBeginEdit={(id) => setEditingTaskId((prev) => (prev === id ? null : id))}
+                onToggleDone={(id) => toggleDone(id)}
+                onDelete={(id) => {
+                  if (!window.confirm("Удалить задачу?")) return;
+                  deleteTask(id);
+                  if (editingTaskId === id) setEditingTaskId(null);
+                }}
+                editPanel={editingTaskId === t.id ? editPanelNode : null}
+              />
+            ))
+          )}
+        </div>
+      </div>
+
+{/* DONE */}
       <details className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
         <summary className="cursor-pointer select-none text-sm font-semibold text-slate-100">
           Выполнено сегодня ({doneToday.length})
