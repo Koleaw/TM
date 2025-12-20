@@ -1,40 +1,55 @@
+:root {
+  color-scheme: dark;
+}
+
+input,
+button,
+select {
+  font: inherit;
+  color: inherit;
+}
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
 /* Немного “приложенческого” ощущения */
 html,
 body {
   height: 100%;
 }
 
+input[type="number"] {
+  -moz-appearance: textfield;
+  appearance: textfield;
 * {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* На тёмной теме нативные иконки выбора даты/времени могут становиться почти невидимыми */
+/* Date/Time pickers: make icons visible on dark background (Chrome/WebKit) */
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+/* Чтобы иконки выбора даты/времени были видны на тёмной теме (Chrome/Edge) */
 :root {
   color-scheme: dark;
 }
 
-input[type="date"],
-input[type="time"],
-input[type="datetime-local"] {
-  color-scheme: dark;
-}
-
-/* Chromium/WebKit */
 input[type="date"]::-webkit-calendar-picker-indicator,
 input[type="time"]::-webkit-calendar-picker-indicator,
 input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  filter: invert(1) brightness(1.35);
+  filter: invert(1);
   opacity: 0.85;
-  cursor: pointer;
 }
 
-/* Кнопка очистки (если браузер её показывает) */
-input[type="date"]::-webkit-clear-button,
-input[type="time"]::-webkit-clear-button,
-input[type="datetime-local"]::-webkit-clear-button {
-  filter: invert(1) brightness(1.35);
+input[type="date"]:hover::-webkit-calendar-picker-indicator,
+input[type="time"]:hover::-webkit-calendar-picker-indicator,
+input[type="datetime-local"]:hover::-webkit-calendar-picker-indicator {
+  opacity: 1;
+  filter: invert(1) brightness(1.4);
+  opacity: 0.9;
+  cursor: pointer;
 }
