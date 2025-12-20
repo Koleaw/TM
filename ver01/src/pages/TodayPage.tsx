@@ -367,7 +367,7 @@ function TaskRow(props: {
         </div>
       </div>
 
-      {editingTaskId === t.id ? editPanelNode : null}
+      {isEditing ? editPanel : null}
     </div>
   );
 }
@@ -756,7 +756,7 @@ function BacklogRow(props: {
         </div>
       </div>
 
-      {editingTaskId === t.id ? editPanelNode : null}
+      {isEditing ? editPanel : null}
     </div>
   );
 }
