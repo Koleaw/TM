@@ -15,6 +15,9 @@ function computeBase(): string {
 
 export default defineConfig({
   base: computeBase(),
+  build: {
+    sourcemap: true,
+  },
   plugins: [
     react(),
     VitePWA({
