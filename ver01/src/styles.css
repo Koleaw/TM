@@ -12,15 +12,29 @@ body {
   -webkit-tap-highlight-color: transparent;
 }
 
-/* Чтобы иконки выбора даты/времени были видны на тёмной теме (Chrome/Edge) */
+/* На тёмной теме нативные иконки выбора даты/времени могут становиться почти невидимыми */
 :root {
   color-scheme: dark;
 }
 
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+  color-scheme: dark;
+}
+
+/* Chromium/WebKit */
 input[type="date"]::-webkit-calendar-picker-indicator,
 input[type="time"]::-webkit-calendar-picker-indicator,
 input[type="datetime-local"]::-webkit-calendar-picker-indicator {
-  filter: invert(1) brightness(1.4);
-  opacity: 0.9;
+  filter: invert(1) brightness(1.35);
+  opacity: 0.85;
   cursor: pointer;
+}
+
+/* Кнопка очистки (если браузер её показывает) */
+input[type="date"]::-webkit-clear-button,
+input[type="time"]::-webkit-clear-button,
+input[type="datetime-local"]::-webkit-clear-button {
+  filter: invert(1) brightness(1.35);
 }
