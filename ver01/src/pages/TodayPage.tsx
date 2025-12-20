@@ -71,8 +71,12 @@ function prioBarClass(p: number) {
 }
 
 
-function toLocalDateTimeInput(ms: number) {
-  const d = new Date(ms);
+function toLocalDateTimeInput(ms: number | null | undefined) {
+  // <input type="datetime-local"> принимает только валидную строку.
+  // Если передать "NaN-NaN-..." некоторые браузеры падают с исключением.
+  if (!isFiniteNumber(ms as any)) return "";
+  const d = new Date(ms as number);
+  if (!isFiniteNumber(d.getTime())) return "";
   const y = d.getFullYear();
   const mo = pad2(d.getMonth() + 1);
   const da = pad2(d.getDate());
@@ -367,7 +371,7 @@ function TaskRow(props: {
         </div>
       </div>
 
-      {isEditing ? editPanel : null}
+      {editingTaskId === t.id ? editPanelNode : null}
     </div>
   );
 }
@@ -756,7 +760,7 @@ function BacklogRow(props: {
         </div>
       </div>
 
-      {isEditing ? editPanel : null}
+      {editingTaskId === t.id ? editPanelNode : null}
     </div>
   );
 }
@@ -975,7 +979,7 @@ export default function TodayPage() {
     setEditPlannedStart(editingTask.plannedStart ?? "");
     setEditEstimate(typeof editingTask.estimateMin === "number" ? String(editingTask.estimateMin) : "");
     setEditPriority(String(editingTask.priority ?? 2));
-    setEditDeadline(editingTask.deadlineAt ? toLocalDateTimeInput(editingTask.deadlineAt) : "");
+    setEditDeadline(isFiniteNumber(editingTask.deadlineAt) ? toLocalDateTimeInput(editingTask.deadlineAt) : "");
   }, [editingTaskId]); // intentionally only when switching task to edit
 
   function saveTaskEdit() {
@@ -1032,7 +1036,7 @@ export default function TodayPage() {
             (t as any).parentId == null &&
             t.plannedDate == null
         )
-        .sort((a, b) => (a.deadlineAt ?? 0) - (b.deadlineAt ?? 0)),
+        .sort((a, b) => (isFiniteNumber(a.deadlineAt) ? a.deadlineAt : 0) - (isFiniteNumber(b.deadlineAt) ? b.deadlineAt : 0)),
     [s.tasks]
   );
 
