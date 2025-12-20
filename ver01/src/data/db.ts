@@ -2,6 +2,18 @@
 import { useEffect, useState } from "react";
 
 export const STORAGE_KEY = "tm.archangel.v1";
+const LAST_ACTION_KEY = "tm.lastAction";
+
+export function setLastAction(action: string) {
+  try {
+    localStorage.setItem(
+      LAST_ACTION_KEY,
+      JSON.stringify({ action, at: new Date().toISOString() })
+    );
+  } catch {
+    // ignore
+  }
+}
 
 export type ID = string;
 
@@ -110,6 +122,15 @@ function now() {
   return Date.now();
 }
 
+function toFiniteNumber(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -198,7 +219,7 @@ function normalizeActiveTimer(a: any): AppState["activeTimer"] {
   if (!a) return null;
   const taskId = a.taskId === null || typeof a.taskId === "string" ? a.taskId : null;
   const timeTypeId = a.timeTypeId === null || typeof a.timeTypeId === "string" ? a.timeTypeId : null;
-  const startedAt = typeof a.startedAt === "number" ? a.startedAt : now();
+  const startedAt = toFiniteNumber(a.startedAt) ?? now();
 
   const kind = normalizeKind(a.kind, timeTypeId);
   const sinkId = normalizeSinkId(kind, a.sinkId);
@@ -210,7 +231,8 @@ function loadState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_STATE;
-    const parsed = JSON.parse(raw) as Partial<AppState>;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return DEFAULT_STATE;
 
     const merged: AppState = {
       ...DEFAULT_STATE,
@@ -283,23 +305,21 @@ function normalizeTask(t: any): Task {
     notes: String(t.notes ?? ""),
     tags: Array.isArray(t.tags) ? t.tags.map(String) : [],
     status: t.status === "done" ? "done" : "todo",
-    plannedDate: t.plannedDate ?? null,
-    plannedStart: t.plannedStart ?? null,
-    estimateMin: typeof t.estimateMin === "number" ? t.estimateMin : null,
+    plannedDate: typeof t.plannedDate === "string" ? t.plannedDate : null,
+    plannedStart: typeof t.plannedStart === "string" ? t.plannedStart : null,
+    estimateMin: toFiniteNumber(t.estimateMin),
     priority: (t.priority === 1 || t.priority === 2 || t.priority === 3) ? t.priority : 2,
-    deadlineAt: typeof t.deadlineAt === "number" ? t.deadlineAt : null,
-    createdAt: typeof t.createdAt === "number" ? t.createdAt : now(),
-    updatedAt: typeof t.updatedAt === "number" ? t.updatedAt : now(),
+    deadlineAt: toFiniteNumber(t.deadlineAt),
+    createdAt: toFiniteNumber(t.createdAt) ?? now(),
+    updatedAt: toFiniteNumber(t.updatedAt) ?? now(),
   };
 }
 
 function normalizeTimeLog(l: any): TimeLog {
-  const startedAt = typeof l.startedAt === "number" ? l.startedAt : now();
-  const endedAt = typeof l.endedAt === "number" ? l.endedAt : startedAt;
+  const startedAt = toFiniteNumber(l.startedAt) ?? now();
+  const endedAt = toFiniteNumber(l.endedAt) ?? startedAt;
   const minutes =
-    typeof l.minutes === "number"
-      ? l.minutes
-      : Math.max(1, Math.round((endedAt - startedAt) / 60000));
+    toFiniteNumber(l.minutes) ?? Math.max(1, Math.round((endedAt - startedAt) / 60000));
 
   const taskId = l.taskId === null || typeof l.taskId === "string" ? l.taskId : null;
   const timeTypeId = l.timeTypeId ? String(l.timeTypeId) : null;

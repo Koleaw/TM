@@ -4,6 +4,7 @@ import {
   deleteTask,
   getState,
   moveTask,
+  setLastAction,
   startTimer,
   stopTimer,
   toggleDone,
@@ -72,7 +73,9 @@ function prioBarClass(p: number) {
 
 
 function toLocalDateTimeInput(ms: number) {
-  const d = new Date(ms);
+  const t = Number(ms);
+  if (!Number.isFinite(t)) return "";
+  const d = new Date(t);
   const y = d.getFullYear();
   const mo = pad2(d.getMonth() + 1);
   const da = pad2(d.getDate());
@@ -367,7 +370,7 @@ function TaskRow(props: {
         </div>
       </div>
 
-      {editingTaskId === t.id ? editPanelNode : null}
+      {isEditing ? editPanel : null}
     </div>
   );
 }
@@ -843,6 +846,7 @@ export default function TodayPage() {
   }
 
   function startOrSwitchToTask(taskId: ID) {
+    setLastAction("startTimer");
     // switching while paused clears resume target — user intentionally switched context
     if (isPaused) setResumeTarget(null);
 
@@ -876,6 +880,7 @@ export default function TodayPage() {
 
   function addHardTask() {
     if (!newHardTitle.trim()) return;
+    setLastAction("addHard");
     createTask(newHardTitle, {
       plannedDate: today,
       plannedStart: newHardStart || null,
@@ -891,6 +896,8 @@ export default function TodayPage() {
 
   function addFlexTask() {
     if (!newFlexTitle.trim()) return;
+
+    setLastAction("addFlex");
 
     const dl = parseDeadlineInput(newFlexDeadline);
 
@@ -923,6 +930,7 @@ export default function TodayPage() {
 
   function addBacklogTask() {
     if (!newBacklogTitle.trim()) return;
+    setLastAction("addBacklog");
     createTask(newBacklogTitle, {
       plannedDate: null,
       plannedStart: null,
@@ -1203,10 +1211,11 @@ const hardToday = useMemo(
                 t={t}
                 children={childrenByParentId[t.id] ?? []}
                 minutesByTaskId={minutesByTaskId}
+                today={today}
                 onMoveToToday={(id) => moveTask(id, today, null)}
                 editingTaskId={editingTaskId}
                 editPanelNode={editPanelNode}
-                                onStartOrSwitch={startOrSwitch}
+                onStartOrSwitch={startOrSwitchToTask}
                 onBeginEdit={(id) => setEditingTaskId(id)}
                 onToggleDone={(id) => toggleDone(id)}
                 onDelete={(id) => {
@@ -1425,7 +1434,7 @@ const hardToday = useMemo(
                 t={t}
                 onMoveToToday={(id) => moveTask(id, today, null)}
                 isEditing={editingTaskId === t.id}
-                onStartOrSwitch={startOrSwitch}
+                onStartOrSwitch={startOrSwitchToTask}
                 onBeginEdit={(id) => setEditingTaskId((prev) => (prev === id ? null : id))}
                 onToggleDone={(id) => toggleDone(id)}
                 onDelete={(id) => {
