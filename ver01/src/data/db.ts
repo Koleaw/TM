@@ -2,6 +2,18 @@
 import { useEffect, useState } from "react";
 
 export const STORAGE_KEY = "tm.archangel.v1";
+const LAST_ACTION_KEY = "tm.lastAction";
+
+export function setLastAction(action: string) {
+  try {
+    localStorage.setItem(
+      LAST_ACTION_KEY,
+      JSON.stringify({ action, at: new Date().toISOString() })
+    );
+  } catch {
+    // ignore
+  }
+}
 
 export type ID = string;
 
@@ -80,6 +92,30 @@ export type Settings = {
   tagLibrary: string[];
 };
 
+export type PlanTask = {
+  id: ID;
+  title: string;
+  note: string;
+  createdAt: number;
+  updatedAt: number;
+};
+
+export type PlanWeek = {
+  weekStart: string; // YYYY-MM-DD Monday by default
+  days: Record<string, PlanTask[]>;
+};
+
+export type PlansState = {
+  year: PlanTask[];
+  month: PlanTask[];
+  weeks: Record<string, PlanWeek>;
+};
+
+export type PlanLocation =
+  | { level: "year"; id: ID }
+  | { level: "month"; id: ID }
+  | { level: "week"; weekStart: string; day: string; id: ID };
+
 export type AppState = {
   version: 1;
   tasks: Task[];
@@ -87,6 +123,7 @@ export type AppState = {
   lists: ListsState;
   reviews: ReviewEntry[];
   settings: Settings;
+  plans: PlansState;
   activeTimer:
     | {
         taskId: ID | null;
@@ -108,6 +145,15 @@ function uid(): ID {
 
 function now() {
   return Date.now();
+}
+
+function toFiniteNumber(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
 }
 
 function pad2(n: number) {
@@ -162,6 +208,232 @@ function normalizeSinkId(kind: TimeLogKind, sinkId: any): ID | null {
   return sinkId === null || typeof sinkId === "string" ? sinkId : null;
 }
 
+function normalizePlanTask(t: any): PlanTask {
+  return {
+    id: String(t?.id ?? uid()),
+    title: String(t?.title ?? ""),
+    note: String(t?.note ?? ""),
+    createdAt: toFiniteNumber(t?.createdAt) ?? now(),
+    updatedAt: toFiniteNumber(t?.updatedAt) ?? now(),
+  };
+}
+
+function emptyWeek(weekStart: string): PlanWeek {
+  const days: Record<string, PlanTask[]> = {};
+  for (const day of weekDays(weekStart)) {
+    days[day] = [];
+  }
+  return { weekStart, days };
+}
+
+function normalizePlanWeek(w: any): PlanWeek {
+  const rawWeekStart = typeof w?.weekStart === "string" ? w.weekStart : todayYMD();
+  const base = emptyWeek(rawWeekStart);
+  const incomingDays: Record<string, any[]> =
+    w && typeof w === "object" && w.days && typeof w.days === "object"
+      ? (w.days as Record<string, any[]>)
+      : {};
+
+  for (const day of Object.keys(incomingDays)) {
+    if (!base.days[day]) base.days[day] = [];
+  }
+
+  const filled: Record<string, PlanTask[]> = {};
+  for (const day of Object.keys(base.days)) {
+    const list = Array.isArray(incomingDays[day]) ? incomingDays[day] : [];
+    filled[day] = list.map(normalizePlanTask);
+  }
+
+  return { weekStart: base.weekStart, days: filled };
+}
+
+function normalizePlans(p: any): PlansState {
+  const safeWeeks: Record<string, PlanWeek> = {};
+  if (p && typeof p === "object" && p.weeks && typeof p.weeks === "object") {
+    for (const [k, v] of Object.entries(p.weeks as Record<string, any>)) {
+      if (typeof k === "string") {
+        const normalized = normalizePlanWeek(v);
+        safeWeeks[k] = normalized;
+      }
+    }
+  }
+
+  return {
+    year: Array.isArray(p?.year) ? p.year.map(normalizePlanTask) : [],
+    month: Array.isArray(p?.month) ? p.month.map(normalizePlanTask) : [],
+    weeks: safeWeeks,
+  };
+}
+
+// ---------------- Plans ----------------
+
+function ensureWeekDays(plans: PlansState, weekStart: string): PlansState {
+  const existing = plans.weeks[weekStart];
+  const normalized = normalizePlanWeek(existing ?? { weekStart, days: {} });
+  return { ...plans, weeks: { ...plans.weeks, [weekStart]: normalized } };
+}
+
+function takePlanTask(plans: PlansState, loc: PlanLocation): { task: PlanTask | null; plans: PlansState } {
+  if (loc.level === "year") {
+    const nextYear = plans.year.filter((t) => t.id !== loc.id);
+    const task = plans.year.find((t) => t.id === loc.id) ?? null;
+    return { task, plans: { ...plans, year: nextYear } };
+  }
+
+  if (loc.level === "month") {
+    const nextMonth = plans.month.filter((t) => t.id !== loc.id);
+    const task = plans.month.find((t) => t.id === loc.id) ?? null;
+    return { task, plans: { ...plans, month: nextMonth } };
+  }
+
+  const safePlans = ensureWeekDays(plans, loc.weekStart);
+  const week = safePlans.weeks[loc.weekStart];
+  const bucket = week.days[loc.day] ?? [];
+  const nextBucket = bucket.filter((t) => t.id !== loc.id);
+  const task = bucket.find((t) => t.id === loc.id) ?? null;
+  const updatedWeek: PlanWeek = {
+    ...week,
+    days: { ...week.days, [loc.day]: nextBucket },
+  };
+  return {
+    task,
+    plans: { ...safePlans, weeks: { ...safePlans.weeks, [loc.weekStart]: updatedWeek } },
+  };
+}
+
+function placeTaskInWeek(plans: PlansState, weekStart: string, day: string, task: PlanTask): PlansState {
+  const normalized = ensureWeekDays(plans, weekStart);
+  const safeWeek = normalized.weeks[weekStart];
+  const safeDay = safeWeek.days[day] ? day : weekDays(weekStart)[0];
+  const updatedWeek: PlanWeek = {
+    ...safeWeek,
+    days: {
+      ...safeWeek.days,
+      [safeDay]: [{ ...task, updatedAt: now() }, ...(safeWeek.days[safeDay] ?? [])],
+    },
+  };
+
+  return { ...normalized, weeks: { ...normalized.weeks, [weekStart]: updatedWeek } };
+}
+
+function placeTaskInMonth(plans: PlansState, task: PlanTask): PlansState {
+  return { ...plans, month: [{ ...task, updatedAt: now() }, ...plans.month] };
+}
+
+function placeTaskInYear(plans: PlansState, task: PlanTask): PlansState {
+  return { ...plans, year: [{ ...task, updatedAt: now() }, ...plans.year] };
+}
+
+export function addPlanTask(level: "year" | "month", title: string, note: string = ""): ID {
+  const trimmed = title.trim();
+  if (!trimmed) return uid();
+  const task: PlanTask = { id: uid(), title: trimmed, note, createdAt: now(), updatedAt: now() };
+
+  setState((s) => {
+    const plans = level === "year" ? placeTaskInYear(s.plans, task) : placeTaskInMonth(s.plans, task);
+    return { ...s, plans };
+  });
+
+  setLastAction(`plan.add.${level}`);
+  return task.id;
+}
+
+export function addPlanWeekTask(weekStart: string, day: string, title: string, note: string = ""): ID {
+  const trimmed = title.trim();
+  if (!trimmed) return uid();
+  const task: PlanTask = { id: uid(), title: trimmed, note, createdAt: now(), updatedAt: now() };
+  setState((s) => ({ ...s, plans: placeTaskInWeek(s.plans, weekStart, day, task) }));
+  setLastAction("plan.add.week");
+  return task.id;
+}
+
+export function movePlanTaskToWeek(loc: PlanLocation, weekStart: string, day: string) {
+  setState((s) => {
+    const taken = takePlanTask(s.plans, loc);
+    if (!taken.task) return s;
+    const plans = placeTaskInWeek(taken.plans, weekStart, day, taken.task);
+    return { ...s, plans };
+  });
+  setLastAction("plan.move.toWeek");
+}
+
+export function movePlanTaskToMonth(loc: PlanLocation) {
+  setState((s) => {
+    const taken = takePlanTask(s.plans, loc);
+    if (!taken.task) return s;
+    const plans = placeTaskInMonth(taken.plans, taken.task);
+    return { ...s, plans };
+  });
+  setLastAction("plan.move.toMonth");
+}
+
+export function movePlanTaskToYear(loc: PlanLocation) {
+  setState((s) => {
+    const taken = takePlanTask(s.plans, loc);
+    if (!taken.task) return s;
+    const plans = placeTaskInYear(taken.plans, taken.task);
+    return { ...s, plans };
+  });
+  setLastAction("plan.move.toYear");
+}
+
+export function movePlanTaskWithinWeek(loc: Extract<PlanLocation, { level: "week" }>, day: string) {
+  movePlanTaskToWeek(loc, loc.weekStart, day);
+}
+
+export function updatePlanTask(loc: PlanLocation, patch: Partial<Pick<PlanTask, "title" | "note">>) {
+  setState((s) => {
+    const taken = takePlanTask(s.plans, loc);
+    if (!taken.task) return s;
+    const nextTask: PlanTask = {
+      ...taken.task,
+      ...patch,
+      title: patch.title?.trim() ?? taken.task.title,
+      updatedAt: now(),
+    };
+
+    if (loc.level === "year") return { ...s, plans: placeTaskInYear(taken.plans, nextTask) };
+    if (loc.level === "month") return { ...s, plans: placeTaskInMonth(taken.plans, nextTask) };
+    return { ...s, plans: placeTaskInWeek(taken.plans, loc.weekStart, loc.day, nextTask) };
+  });
+  setLastAction("plan.update");
+}
+
+export function deletePlanTask(loc: PlanLocation) {
+  setState((s) => {
+    const taken = takePlanTask(s.plans, loc);
+    if (!taken.task) return s;
+    return { ...s, plans: taken.plans };
+  });
+  setLastAction("plan.delete");
+}
+
+export function movePlanTaskToToday(loc: PlanLocation, plannedDate?: string) {
+  setState((s) => {
+    const taken = takePlanTask(s.plans, loc);
+    if (!taken.task) return s;
+    const date = plannedDate ?? (loc.level === "week" ? loc.day : todayYMD());
+    const newTask: Task = {
+      id: uid(),
+      title: taken.task.title || "Без названия",
+      notes: taken.task.note ?? "",
+      tags: [],
+      status: "todo",
+      plannedDate: date,
+      plannedStart: null,
+      estimateMin: null,
+      priority: 2,
+      deadlineAt: null,
+      createdAt: now(),
+      updatedAt: now(),
+    };
+
+    return { ...s, tasks: [newTask, ...s.tasks], plans: taken.plans };
+  });
+
+  setLastAction("plan.move.today");
+}
+
 const DEFAULT_STATE: AppState = {
   version: 1,
   tasks: [],
@@ -185,6 +457,7 @@ const DEFAULT_STATE: AppState = {
     ],
   },
   reviews: [],
+  plans: { year: [], month: [], weeks: {} },
   settings: {
     weekStartsOn: 1,
     dayStartHour: 8,
@@ -198,7 +471,7 @@ function normalizeActiveTimer(a: any): AppState["activeTimer"] {
   if (!a) return null;
   const taskId = a.taskId === null || typeof a.taskId === "string" ? a.taskId : null;
   const timeTypeId = a.timeTypeId === null || typeof a.timeTypeId === "string" ? a.timeTypeId : null;
-  const startedAt = typeof a.startedAt === "number" ? a.startedAt : now();
+  const startedAt = toFiniteNumber(a.startedAt) ?? now();
 
   const kind = normalizeKind(a.kind, timeTypeId);
   const sinkId = normalizeSinkId(kind, a.sinkId);
@@ -210,13 +483,15 @@ function loadState(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_STATE;
-    const parsed = JSON.parse(raw) as Partial<AppState>;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return DEFAULT_STATE;
 
     const merged: AppState = {
       ...DEFAULT_STATE,
       ...parsed,
       lists: { ...DEFAULT_STATE.lists, ...(parsed.lists ?? {}) },
       settings: { ...DEFAULT_STATE.settings, ...(parsed.settings ?? {}) },
+      plans: normalizePlans((parsed as any).plans ?? {}),
       tasks: Array.isArray((parsed as any).tasks)
         ? (parsed as any).tasks.map(normalizeTask)
         : DEFAULT_STATE.tasks,
@@ -283,23 +558,21 @@ function normalizeTask(t: any): Task {
     notes: String(t.notes ?? ""),
     tags: Array.isArray(t.tags) ? t.tags.map(String) : [],
     status: t.status === "done" ? "done" : "todo",
-    plannedDate: t.plannedDate ?? null,
-    plannedStart: t.plannedStart ?? null,
-    estimateMin: typeof t.estimateMin === "number" ? t.estimateMin : null,
+    plannedDate: typeof t.plannedDate === "string" ? t.plannedDate : null,
+    plannedStart: typeof t.plannedStart === "string" ? t.plannedStart : null,
+    estimateMin: toFiniteNumber(t.estimateMin),
     priority: (t.priority === 1 || t.priority === 2 || t.priority === 3) ? t.priority : 2,
-    deadlineAt: typeof t.deadlineAt === "number" ? t.deadlineAt : null,
-    createdAt: typeof t.createdAt === "number" ? t.createdAt : now(),
-    updatedAt: typeof t.updatedAt === "number" ? t.updatedAt : now(),
+    deadlineAt: toFiniteNumber(t.deadlineAt),
+    createdAt: toFiniteNumber(t.createdAt) ?? now(),
+    updatedAt: toFiniteNumber(t.updatedAt) ?? now(),
   };
 }
 
 function normalizeTimeLog(l: any): TimeLog {
-  const startedAt = typeof l.startedAt === "number" ? l.startedAt : now();
-  const endedAt = typeof l.endedAt === "number" ? l.endedAt : startedAt;
+  const startedAt = toFiniteNumber(l.startedAt) ?? now();
+  const endedAt = toFiniteNumber(l.endedAt) ?? startedAt;
   const minutes =
-    typeof l.minutes === "number"
-      ? l.minutes
-      : Math.max(1, Math.round((endedAt - startedAt) / 60000));
+    toFiniteNumber(l.minutes) ?? Math.max(1, Math.round((endedAt - startedAt) / 60000));
 
   const taskId = l.taskId === null || typeof l.taskId === "string" ? l.taskId : null;
   const timeTypeId = l.timeTypeId ? String(l.timeTypeId) : null;
@@ -592,6 +865,7 @@ export function importBackupJson(jsonText: string) {
     ...DEFAULT_STATE,
     ...parsed,
     lists: { ...DEFAULT_STATE.lists, ...(parsed.lists ?? {}) },
+    plans: normalizePlans((parsed as any).plans ?? {}),
     settings: { ...DEFAULT_STATE.settings, ...(parsed.settings ?? {}) },
     tasks: Array.isArray((parsed as any).tasks) ? (parsed as any).tasks.map(normalizeTask) : [],
     timeLogs: Array.isArray((parsed as any).timeLogs) ? (parsed as any).timeLogs.map(normalizeTimeLog) : [],
