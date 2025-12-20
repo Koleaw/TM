@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { HashRouter } from "react-router-dom";
 import App from "./App.tsx";
 import "./styles.css";
 
@@ -277,7 +278,9 @@ async function mount() {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <RootErrorBoundary>
-        <App />
+        <HashRouter>
+          <App />
+        </HashRouter>
       </RootErrorBoundary>
     </React.StrictMode>
   );
