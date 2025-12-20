@@ -2,6 +2,18 @@
 import { useEffect, useState } from "react";
 
 export const STORAGE_KEY = "tm.archangel.v1";
+const LAST_ACTION_KEY = "tm.lastAction";
+
+export function setLastAction(action: string) {
+  try {
+    localStorage.setItem(
+      LAST_ACTION_KEY,
+      JSON.stringify({ action, at: new Date().toISOString() })
+    );
+  } catch {
+    // ignore
+  }
+}
 
 export type ID = string;
 

@@ -4,6 +4,7 @@ import {
   deleteTask,
   getState,
   moveTask,
+  setLastAction,
   startTimer,
   stopTimer,
   toggleDone,
@@ -369,7 +370,7 @@ function TaskRow(props: {
         </div>
       </div>
 
-      {editingTaskId === t.id ? editPanelNode : null}
+      {isEditing ? editPanel : null}
     </div>
   );
 }
@@ -845,6 +846,7 @@ export default function TodayPage() {
   }
 
   function startOrSwitchToTask(taskId: ID) {
+    setLastAction("startTimer");
     // switching while paused clears resume target — user intentionally switched context
     if (isPaused) setResumeTarget(null);
 
@@ -878,6 +880,7 @@ export default function TodayPage() {
 
   function addHardTask() {
     if (!newHardTitle.trim()) return;
+    setLastAction("addHard");
     createTask(newHardTitle, {
       plannedDate: today,
       plannedStart: newHardStart || null,
@@ -893,6 +896,8 @@ export default function TodayPage() {
 
   function addFlexTask() {
     if (!newFlexTitle.trim()) return;
+
+    setLastAction("addFlex");
 
     const dl = parseDeadlineInput(newFlexDeadline);
 
@@ -925,6 +930,7 @@ export default function TodayPage() {
 
   function addBacklogTask() {
     if (!newBacklogTitle.trim()) return;
+    setLastAction("addBacklog");
     createTask(newBacklogTitle, {
       plannedDate: null,
       plannedStart: null,

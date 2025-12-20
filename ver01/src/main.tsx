@@ -106,6 +106,7 @@ class RootErrorBoundary extends React.Component<
         href: location.href,
         ua: navigator.userAgent,
         swControlled: "serviceWorker" in navigator ? !!navigator.serviceWorker.controller : false,
+        lastAction: localStorage.getItem("tm.lastAction") ?? null,
       };
       localStorage.setItem("tm.lastError", JSON.stringify(payload));
     } catch {
