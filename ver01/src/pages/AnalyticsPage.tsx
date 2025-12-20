@@ -123,9 +123,10 @@ export default function AnalyticsPage() {
   }, [s.lists.sinks]);
 
   const weekLogs = useMemo(() => {
-    const start = new Date(`${weekStart}T00:00:00`).getTime();
-    const end = new Date(`${ymdAddDays(weekStart, 7)}T00:00:00`).getTime();
-    return s.timeLogs.filter((l) => l.startedAt >= start && l.startedAt < end);
+    const start = parseYMD(weekStart).getTime();
+    const end = parseYMD(ymdAddDays(weekStart, 7)).getTime();
+    if (!Number.isFinite(start) || !Number.isFinite(end)) return [];
+    return s.timeLogs.filter((l) => Number.isFinite(l.startedAt) && l.startedAt >= start && l.startedAt < end);
   }, [s.timeLogs, weekStart]);
 
   const totalTrackedMin = useMemo(
@@ -193,6 +194,7 @@ export default function AnalyticsPage() {
     for (const ymd of days) map.set(ymd, { ymd, minutes: 0, logs: 0 });
 
     for (const l of weekLogs) {
+      if (!Number.isFinite(l.startedAt)) continue;
       const dt = new Date(l.startedAt);
       const ymd = `${dt.getFullYear()}-${pad2(dt.getMonth() + 1)}-${pad2(dt.getDate())}`;
       const row = map.get(ymd);

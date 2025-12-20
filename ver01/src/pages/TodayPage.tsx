@@ -72,7 +72,9 @@ function prioBarClass(p: number) {
 
 
 function toLocalDateTimeInput(ms: number) {
-  const d = new Date(ms);
+  const t = Number(ms);
+  if (!Number.isFinite(t)) return "";
+  const d = new Date(t);
   const y = d.getFullYear();
   const mo = pad2(d.getMonth() + 1);
   const da = pad2(d.getDate());
@@ -1203,10 +1205,11 @@ const hardToday = useMemo(
                 t={t}
                 children={childrenByParentId[t.id] ?? []}
                 minutesByTaskId={minutesByTaskId}
+                today={today}
                 onMoveToToday={(id) => moveTask(id, today, null)}
                 editingTaskId={editingTaskId}
                 editPanelNode={editPanelNode}
-                                onStartOrSwitch={startOrSwitch}
+                onStartOrSwitch={startOrSwitchToTask}
                 onBeginEdit={(id) => setEditingTaskId(id)}
                 onToggleDone={(id) => toggleDone(id)}
                 onDelete={(id) => {
@@ -1425,7 +1428,7 @@ const hardToday = useMemo(
                 t={t}
                 onMoveToToday={(id) => moveTask(id, today, null)}
                 isEditing={editingTaskId === t.id}
-                onStartOrSwitch={startOrSwitch}
+                onStartOrSwitch={startOrSwitchToTask}
                 onBeginEdit={(id) => setEditingTaskId((prev) => (prev === id ? null : id))}
                 onToggleDone={(id) => toggleDone(id)}
                 onDelete={(id) => {
