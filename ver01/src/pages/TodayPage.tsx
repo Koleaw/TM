@@ -711,31 +711,57 @@ function BacklogRow(props: {
     onMoveToToday,
   } = props;
 
-  return (
-    <div className="task-row">
-      <div className="task-main">
-        <div className="task-title">{t.title}</div>
-        <div className="task-meta">
-          {t.priority} · {t.estimateMin} мин
-        </div>
-      </div>
+  const metaParts: string[] = [];
+  metaParts.push(`приоритет: ${prioLabel(t.priority ?? 2)}`);
+  if (typeof t.estimateMin === "number" && t.estimateMin > 0) metaParts.push(`оценка ${fmtDuration(t.estimateMin)}`);
+  if (t.doneAt) metaParts.push("закрыто");
 
-      <div className="task-actions">
-        <button className="btn" onClick={() => onMoveToToday(t.id)}>
-          В сегодня
-        </button>
-        <button className="btn" onClick={() => onStartOrSwitch(t.id)}>
-          Старт
-        </button>
-        <button className="btn" onClick={() => onBeginEdit(t.id)}>
-          Изменить
-        </button>
-        <button className="btn" onClick={() => onToggleDone(t.id)}>
-          {t.doneAt ? "Вернуть" : "Сделано"}
-        </button>
-        <button className="btn btn-danger" onClick={() => onDelete(t.id)}>
-          Удалить
-        </button>
+  return (
+    <div className="relative rounded-xl border border-slate-800 bg-slate-950 p-3 pl-4">
+      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${prioBarClass(t.priority)}`} />
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-medium text-slate-100">{t.title}</div>
+          <div className="mt-0.5 text-xs text-slate-400">{metaParts.join(" • ")}</div>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
+            onClick={() => onMoveToToday(t.id)}
+            title="Добавить в план на сегодня"
+          >
+            В сегодня
+          </button>
+          <button
+            className="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950"
+            onClick={() => onStartOrSwitch(t.id)}
+            title="Старт / переключиться"
+          >
+            Старт
+          </button>
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+            onClick={() => onBeginEdit(t.id)}
+            title="Редактировать"
+          >
+            ✎
+          </button>
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+            onClick={() => onToggleDone(t.id)}
+            title="Закрыть/открыть"
+          >
+            ✓
+          </button>
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+            onClick={() => onDelete(t.id)}
+            title="Удалить"
+          >
+            🗑
+          </button>
+        </div>
       </div>
 
       {isEditing ? editPanel : null}
@@ -1390,7 +1416,7 @@ const hardToday = useMemo(
 
         <div className="mt-3 flex flex-wrap items-center gap-2 rounded-xl border border-slate-800 bg-slate-950 p-3">
           <input
-            className="h-10 min-w-[240px] flex-1 rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
+            className="h-10 min-w-[240px] flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm outline-none focus:border-slate-600"
             placeholder="Новая задача в беклог…"
             value={newBacklogTitle}
             onChange={(e) => setNewBacklogTitle(e.target.value)}
@@ -1399,14 +1425,16 @@ const hardToday = useMemo(
             }}
           />
           <input
-            className="h-10 w-[110px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
+            type="number"
+            min={0}
+            className="h-10 w-[110px] rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm outline-none focus:border-slate-600"
             placeholder="оценка"
             value={newBacklogEstimate}
             onChange={(e) => setNewBacklogEstimate(e.target.value)}
           />
 
           <select
-            className="h-10 w-[150px] rounded-lg border border-slate-800 bg-slate-900 px-3 text-sm outline-none focus:border-slate-600"
+            className="h-10 w-[150px] rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm outline-none focus:border-slate-600"
             value={newBacklogPriority}
             onChange={(e) => setNewBacklogPriority(e.target.value)}
             title="Приоритет"
@@ -1417,7 +1445,7 @@ const hardToday = useMemo(
           </select>
 
           <button
-            className="h-10 rounded-lg bg-slate-100 px-3 text-sm font-semibold text-slate-950 hover:bg-white"
+            className="h-10 rounded-lg border border-slate-800 bg-slate-950 px-4 text-sm hover:bg-slate-800"
             onClick={addBacklogTask}
           >
             Добавить
