@@ -1205,10 +1205,11 @@ const hardToday = useMemo(
                 t={t}
                 children={childrenByParentId[t.id] ?? []}
                 minutesByTaskId={minutesByTaskId}
+                today={today}
                 onMoveToToday={(id) => moveTask(id, today, null)}
                 editingTaskId={editingTaskId}
                 editPanelNode={editPanelNode}
-                                onStartOrSwitch={startOrSwitch}
+                onStartOrSwitch={startOrSwitchToTask}
                 onBeginEdit={(id) => setEditingTaskId(id)}
                 onToggleDone={(id) => toggleDone(id)}
                 onDelete={(id) => {
@@ -1427,7 +1428,7 @@ const hardToday = useMemo(
                 t={t}
                 onMoveToToday={(id) => moveTask(id, today, null)}
                 isEditing={editingTaskId === t.id}
-                onStartOrSwitch={startOrSwitch}
+                onStartOrSwitch={startOrSwitchToTask}
                 onBeginEdit={(id) => setEditingTaskId((prev) => (prev === id ? null : id))}
                 onToggleDone={(id) => toggleDone(id)}
                 onDelete={(id) => {
