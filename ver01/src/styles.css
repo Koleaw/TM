@@ -8,33 +8,22 @@ select {
   font: inherit;
   color: inherit;
 }
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
 
 input[type="number"]::-webkit-inner-spin-button,
 input[type="number"]::-webkit-outer-spin-button {
   -webkit-appearance: none;
   margin: 0;
-/* Немного “приложенческого” ощущения */
-html,
-body {
-  height: 100%;
 }
 
 input[type="number"] {
   -moz-appearance: textfield;
   appearance: textfield;
-* {
-  -webkit-tap-highlight-color: transparent;
 }
 
 /* Date/Time pickers: make icons visible on dark background (Chrome/WebKit) */
 input[type="date"],
 input[type="time"],
 input[type="datetime-local"] {
-/* Чтобы иконки выбора даты/времени были видны на тёмной теме (Chrome/Edge) */
-:root {
   color-scheme: dark;
 }
 
@@ -49,7 +38,4 @@ input[type="date"]:hover::-webkit-calendar-picker-indicator,
 input[type="time"]:hover::-webkit-calendar-picker-indicator,
 input[type="datetime-local"]:hover::-webkit-calendar-picker-indicator {
   opacity: 1;
-  filter: invert(1) brightness(1.4);
-  opacity: 0.9;
-  cursor: pointer;
 }
