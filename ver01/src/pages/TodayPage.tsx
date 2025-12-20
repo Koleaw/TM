@@ -43,7 +43,7 @@ function fmtDuration(min: number) {
 }
 
 function fmtCountdown(deadlineAt: number) {
-  if (!isFiniteNumber(deadlineAt)) return \"—\";
+  if (!isFiniteNumber(deadlineAt)) return "—";
   const diff = deadlineAt - Date.now();
   const sign = diff < 0 ? "-" : "";
   const abs = Math.abs(diff);
