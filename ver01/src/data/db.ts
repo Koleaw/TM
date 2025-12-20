@@ -281,14 +281,14 @@ function normalizeTask(t: any): Task {
     tags: Array.isArray(t.tags) ? t.tags.map(String) : [],
     status: t.status === "done" ? "done" : "todo",
     plannedDate: t.plannedDate ?? null,
-    plannedStart: t.plannedStart ?? null,
-    estimateMin: typeof t.estimateMin === "number" ? t.estimateMin : null,
+    plannedStart: typeof t.plannedStart === "string" ? t.plannedStart : null,
+    estimateMin: typeof t.estimateMin === "number" && isFinite(t.estimateMin) ? t.estimateMin : null,
     priority: (t.priority === 1 || t.priority === 2 || t.priority === 3) ? t.priority : 2,
-    deadlineAt: typeof t.deadlineAt === "number" ? t.deadlineAt : null,
+    deadlineAt: typeof t.deadlineAt === "number" && isFinite(t.deadlineAt) ? t.deadlineAt : null,
     parentId: t.parentId == null ? null : String(t.parentId),
-    sortOrder: typeof t.sortOrder === "number" ? t.sortOrder : null,
-    createdAt: typeof t.createdAt === "number" ? t.createdAt : now(),
-    updatedAt: typeof t.updatedAt === "number" ? t.updatedAt : now(),
+    sortOrder: typeof t.sortOrder === "number" && isFinite(t.sortOrder) ? t.sortOrder : null,
+    createdAt: typeof t.createdAt === "number" && isFinite(t.createdAt) ? t.createdAt : now(),
+    updatedAt: typeof t.updatedAt === "number" && isFinite(t.updatedAt) ? t.updatedAt : now(),
   };
 }
 
