@@ -1,7 +1,7 @@
 
 import { useEffect, useState } from "react";
 
-const STORAGE_KEY = "tm.archangel.v1";
+export const STORAGE_KEY = "tm.archangel.v1";
 
 export type ID = string;
 
@@ -180,7 +180,6 @@ const DEFAULT_STATE: AppState = {
       { id: "tt_road", name: "Дорога" },
       { id: "tt_life", name: "Быт" },
       { id: "tt_rest", name: "Восстановление/отдых" },
-      { id: "tt_pause", name: "Пауза" },
       { id: "tt_sleep", name: "Сон" },
       { id: "tt_sink", name: "Поглотитель" },
     ],
@@ -230,15 +229,6 @@ function loadState(): AppState {
       activeTimer: normalizeActiveTimer((parsed as any).activeTimer),
     };
 
-// MIGRATION: ensure built-in "Пауза" time type exists (older localStorage may miss it)
-if (!merged.lists.timeTypes.some((tt) => tt.id === "tt_pause")) {
-  // Insert after "Восстановление/отдых" if present, otherwise append.
-  const idx = merged.lists.timeTypes.findIndex((tt) => tt.id === "tt_rest");
-  const pause = { id: "tt_pause", name: "Пауза" };
-  if (idx >= 0) merged.lists.timeTypes = [...merged.lists.timeTypes.slice(0, idx + 1), pause, ...merged.lists.timeTypes.slice(idx + 1)];
-  else merged.lists.timeTypes = [...merged.lists.timeTypes, pause];
-}
-
     return merged;
   } catch {
     return DEFAULT_STATE;
@@ -246,7 +236,14 @@ if (!merged.lists.timeTypes.some((tt) => tt.id === "tt_pause")) {
 }
 
 function saveState(s: AppState) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
+  } catch (e) {
+    // В некоторых браузерах (особенно iOS Safari / приватный режим / отключённые cookies)
+    // localStorage может бросать исключение на setItem. Не падаем — просто не сохраняем.
+    // eslint-disable-next-line no-console
+    console.warn("saveState failed:", e);
+  }
 }
 
 let STATE: AppState = loadState();
