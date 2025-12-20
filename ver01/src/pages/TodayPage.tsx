@@ -689,77 +689,57 @@ function DeadlineRow(props: {
 
 function BacklogRow(props: {
   t: Task;
-  today: string;
   isEditing: boolean;
+  editPanel: React.ReactNode;
   onStartOrSwitch: (taskId: ID) => void;
   onBeginEdit: (taskId: ID) => void;
   onToggleDone: (taskId: ID) => void;
   onDelete: (taskId: ID) => void;
-  editPanel: React.ReactNode;
+  onMoveToToday: (taskId: ID) => void;
 }) {
-  const { t, today, isEditing, onStartOrSwitch, onBeginEdit, onToggleDone, onDelete, editPanel } = props;
+  const {
+    t,
+    isEditing,
+    editPanel,
+    onStartOrSwitch,
+    onBeginEdit,
+    onToggleDone,
+    onDelete,
+    onMoveToToday,
+  } = props;
 
   return (
-    <div className="relative rounded-xl border border-slate-800 bg-slate-950 p-3 pl-4">
-      <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${prioBarClass(t.priority)}`} />
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-slate-100">{t.title}</div>
-          <div className="mt-0.5 text-xs text-slate-400">
-            {`приоритет: ${prioLabel(t.priority)}`}
-            {typeof t.estimateMin === "number" && t.estimateMin > 0
-              ? ` • оценка: ${fmtDuration(t.estimateMin)}`
-              : ""}
-          </div>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            className="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950"
-            onClick={() => onStartOrSwitch(t.id)}
-            title="Старт / переключиться"
-          >
-            Старт
-          </button>
-
-          <button
-            className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
-            onClick={() => moveTask(t.id, today, null)}
-            title="Добавить в план на сегодня"
-          >
-            В сегодня
-          </button>
-
-          <button
-            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
-            onClick={() => onBeginEdit(t.id)}
-            title="Редактировать"
-          >
-            ✎
-          </button>
-
-          <button
-            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
-            onClick={() => onToggleDone(t.id)}
-            title="Закрыть/открыть"
-          >
-            ✓
-          </button>
-
-          <button
-            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
-            onClick={() => onDelete(t.id)}
-            title="Удалить"
-          >
-            🗑
-          </button>
+    <div className="task-row">
+      <div className="task-main">
+        <div className="task-title">{t.title}</div>
+        <div className="task-meta">
+          {t.priority} · {t.estimateMin} мин
         </div>
       </div>
 
-      {editingTaskId === t.id ? editPanelNode : null}
+      <div className="task-actions">
+        <button className="btn" onClick={() => onMoveToToday(t.id)}>
+          В сегодня
+        </button>
+        <button className="btn" onClick={() => onStartOrSwitch(t.id)}>
+          Старт
+        </button>
+        <button className="btn" onClick={() => onBeginEdit(t.id)}>
+          Изменить
+        </button>
+        <button className="btn" onClick={() => onToggleDone(t.id)}>
+          {t.doneAt ? "Вернуть" : "Сделано"}
+        </button>
+        <button className="btn btn-danger" onClick={() => onDelete(t.id)}>
+          Удалить
+        </button>
+      </div>
+
+      {isEditing ? editPanel : null}
     </div>
   );
 }
+
 
 // ------------------------------
 // page
@@ -1223,7 +1203,7 @@ const hardToday = useMemo(
                 t={t}
                 children={childrenByParentId[t.id] ?? []}
                 minutesByTaskId={minutesByTaskId}
-                today={today}
+                onMoveToToday={(id) => moveTask(id, today, null)}
                 editingTaskId={editingTaskId}
                 editPanelNode={editPanelNode}
                                 onStartOrSwitch={startOrSwitch}
@@ -1443,7 +1423,7 @@ const hardToday = useMemo(
               <BacklogRow
                 key={t.id}
                 t={t}
-                today={today}
+                onMoveToToday={(id) => moveTask(id, today, null)}
                 isEditing={editingTaskId === t.id}
                 onStartOrSwitch={startOrSwitch}
                 onBeginEdit={(id) => setEditingTaskId((prev) => (prev === id ? null : id))}
