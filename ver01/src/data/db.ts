@@ -25,10 +25,6 @@ export type Task = {
   // дедлайн (если есть). epoch ms
   deadlineAt: number | null;
 
-  // связь "проект (дедлайн) → бифштексы"
-  parentId: ID | null;
-  sortOrder: number | null; // порядок внутри родителя
-
   createdAt: number;
   updatedAt: number;
 };
@@ -184,6 +180,7 @@ const DEFAULT_STATE: AppState = {
       { id: "tt_road", name: "Дорога" },
       { id: "tt_life", name: "Быт" },
       { id: "tt_rest", name: "Восстановление/отдых" },
+      { id: "tt_pause", name: "Пауза" },
       { id: "tt_sleep", name: "Сон" },
       { id: "tt_sink", name: "Поглотитель" },
     ],
@@ -233,6 +230,15 @@ function loadState(): AppState {
       activeTimer: normalizeActiveTimer((parsed as any).activeTimer),
     };
 
+// MIGRATION: ensure built-in "Пауза" time type exists (older localStorage may miss it)
+if (!merged.lists.timeTypes.some((tt) => tt.id === "tt_pause")) {
+  // Insert after "Восстановление/отдых" if present, otherwise append.
+  const idx = merged.lists.timeTypes.findIndex((tt) => tt.id === "tt_rest");
+  const pause = { id: "tt_pause", name: "Пауза" };
+  if (idx >= 0) merged.lists.timeTypes = [...merged.lists.timeTypes.slice(0, idx + 1), pause, ...merged.lists.timeTypes.slice(idx + 1)];
+  else merged.lists.timeTypes = [...merged.lists.timeTypes, pause];
+}
+
     return merged;
   } catch {
     return DEFAULT_STATE;
@@ -240,14 +246,7 @@ function loadState(): AppState {
 }
 
 function saveState(s: AppState) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
-  } catch (err) {
-    // В некоторых браузерах/режимах (например, Safari Private) setItem может падать.
-    // Храни состояние в памяти и не роняй приложение.
-    // eslint-disable-next-line no-console
-    console.warn("Failed to persist state", err);
-  }
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(s));
 }
 
 let STATE: AppState = loadState();
@@ -292,8 +291,6 @@ function normalizeTask(t: any): Task {
     estimateMin: typeof t.estimateMin === "number" ? t.estimateMin : null,
     priority: (t.priority === 1 || t.priority === 2 || t.priority === 3) ? t.priority : 2,
     deadlineAt: typeof t.deadlineAt === "number" ? t.deadlineAt : null,
-    parentId: t.parentId == null ? null : String(t.parentId),
-    sortOrder: typeof t.sortOrder === "number" ? t.sortOrder : null,
     createdAt: typeof t.createdAt === "number" ? t.createdAt : now(),
     updatedAt: typeof t.updatedAt === "number" ? t.updatedAt : now(),
   };
@@ -332,53 +329,28 @@ export function createTask(
   title: string,
   opts?: Partial<Omit<Task, "id" | "createdAt" | "updatedAt">>
 ): ID {
-  const id = uid();
-  const trimmed = title.trim() || "Без названия";
+  const t: Task = {
+    id: uid(),
+    title: title.trim() || "Без названия",
+    notes: "",
+    tags: [],
+    status: "todo",
+    plannedDate: null,
+    plannedStart: null,
+    estimateMin: null,
+    priority: 2,
+    deadlineAt: null,
+    createdAt: now(),
+    updatedAt: now(),
+    ...(opts ?? {}),
+  };
 
-  setState((s) => {
-    const pid = (opts as any)?.parentId ?? null;
+  setState((s) => ({
+    ...s,
+    tasks: [t, ...s.tasks],
+  }));
 
-    // Если это "бифштекс", то ставим ему порядок автоматически (в конец списка) — если не задан явно.
-    let sortOrder: number | null =
-      typeof (opts as any)?.sortOrder === "number" ? (opts as any).sortOrder : null;
-
-    if (pid && sortOrder == null) {
-      const siblings = s.tasks.filter((t) => (t as any).parentId === pid);
-      const max = Math.max(
-        -1,
-        ...siblings.map((t) => (typeof (t as any).sortOrder === "number" ? (t as any).sortOrder : -1))
-      );
-      sortOrder = max + 1;
-    }
-
-    const t: Task = {
-      id,
-      title: trimmed,
-      notes: "",
-      tags: [],
-      status: "todo",
-      plannedDate: null,
-      plannedStart: null,
-      estimateMin: 0,
-      priority: 2,
-      deadlineAt: null,
-      parentId: pid ? String(pid) : null,
-      sortOrder,
-      createdAt: now(),
-      updatedAt: now(),
-      ...(opts ?? {}),
-      // нормализуем на всякий
-      parentId: pid ? String(pid) : null,
-      sortOrder,
-    };
-
-    return {
-      ...s,
-      tasks: [t, ...s.tasks],
-    };
-  });
-
-  return id;
+  return t.id;
 }
 
 export function updateTask(id: ID, patch: Partial<Task>) {
@@ -391,25 +363,7 @@ export function updateTask(id: ID, patch: Partial<Task>) {
 export function toggleDone(id: ID) {
   const t = STATE.tasks.find((x) => x.id === id);
   if (!t) return;
-
-  const nextStatus: TaskStatus = t.status === "done" ? "todo" : "done";
-  updateTask(id, { status: nextStatus });
-
-  // Если это "бифштекс" — поддерживаем родителя: когда все бифштексы закрыты, проект закрывается сам.
-  const pid = (t as any).parentId ?? null;
-  if (!pid) return;
-
-  const parent = STATE.tasks.find((x) => x.id === pid);
-  if (!parent) return;
-
-  const children = STATE.tasks.filter((x) => (x as any).parentId === pid);
-  if (children.length === 0) return;
-
-  const allDone = children.every((c) => (c.id === id ? nextStatus : c.status) === "done");
-  const anyTodo = children.some((c) => (c.id === id ? nextStatus : c.status) !== "done");
-
-  if (allDone && parent.status !== "done") updateTask(parent.id, { status: "done" });
-  if (anyTodo && parent.status === "done") updateTask(parent.id, { status: "todo" });
+  updateTask(id, { status: t.status === "done" ? "todo" : "done" });
 }
 
 export function moveTask(id: ID, plannedDate: string | null, plannedStart: string | null = null) {
@@ -417,30 +371,11 @@ export function moveTask(id: ID, plannedDate: string | null, plannedStart: strin
 }
 
 export function deleteTask(id: ID) {
-  setState((s) => {
-    const toDelete = new Set<ID>();
-    const stack: ID[] = [id];
-
-    while (stack.length) {
-      const cur = stack.pop()!;
-      if (toDelete.has(cur)) continue;
-      toDelete.add(cur);
-
-      for (const t of s.tasks) {
-        if ((t as any).parentId === cur) stack.push(t.id);
-      }
-    }
-
-    return {
-      ...s,
-      tasks: s.tasks.filter((t) => !toDelete.has(t.id)),
-      timeLogs: s.timeLogs.filter((l) => l.taskId == null || !toDelete.has(l.taskId)),
-      activeTimer:
-        s.activeTimer && s.activeTimer.taskId && toDelete.has(s.activeTimer.taskId)
-          ? null
-          : s.activeTimer,
-    };
-  });
+  setState((s) => ({
+    ...s,
+    tasks: s.tasks.filter((t) => t.id !== id),
+    timeLogs: s.timeLogs.filter((l) => l.taskId !== id),
+  }));
 }
 
 // ---------------- Timer / logs ----------------
