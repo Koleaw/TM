@@ -1,5 +1,6 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
+import { HashRouter } from "react-router-dom";
 import App from "./App.tsx";
 import "./styles.css";
 
@@ -105,6 +106,7 @@ class RootErrorBoundary extends React.Component<
         href: location.href,
         ua: navigator.userAgent,
         swControlled: "serviceWorker" in navigator ? !!navigator.serviceWorker.controller : false,
+        lastAction: localStorage.getItem("tm.lastAction") ?? null,
       };
       localStorage.setItem("tm.lastError", JSON.stringify(payload));
     } catch {
@@ -115,9 +117,9 @@ class RootErrorBoundary extends React.Component<
   }
 
   private hardReset = async () => {
-    // 1) localStorage
+    // 1) localStorage — удаляем все данные приложения (включая возможные бэкапы/ошибки)
     try {
-      localStorage.removeItem(STORAGE_KEY);
+      localStorage.clear();
     } catch {
       // ignore
     }
@@ -150,6 +152,7 @@ class RootErrorBoundary extends React.Component<
 
     const err = this.state.error;
     const last = this.readLastError();
+    const componentStack = this.state.info?.componentStack;
 
     return (
       <div
@@ -183,7 +186,7 @@ class RootErrorBoundary extends React.Component<
                 fontWeight: 600,
               }}
             >
-              Сбросить данные/кэш и перезагрузить
+              Жёсткий сброс (данные + кэш)
             </button>
             <button
               onClick={() => location.reload()}
@@ -239,8 +242,19 @@ class RootErrorBoundary extends React.Component<
               SW контролирует страницу: {"serviceWorker" in navigator && navigator.serviceWorker.controller ? "да" : "нет"}
             </div>
             <pre style={{ whiteSpace: "pre-wrap", opacity: 0.9, margin: 0 }}>
-              {err.stack ?? ""}
+              {(err.stack && err.stack.trim()) || `${err}`}
             </pre>
+
+            {componentStack ? (
+              <details style={{ marginTop: 12 }}>
+                <summary style={{ cursor: "pointer", fontWeight: 700 }}>
+                  React component stack
+                </summary>
+                <pre style={{ whiteSpace: "pre-wrap", opacity: 0.9, margin: 0 }}>
+                  {componentStack}
+                </pre>
+              </details>
+            ) : null}
 
             {last ? (
               <details style={{ marginTop: 12 }}>
@@ -265,7 +279,9 @@ async function mount() {
   ReactDOM.createRoot(document.getElementById("root")!).render(
     <React.StrictMode>
       <RootErrorBoundary>
-        <App />
+        <HashRouter>
+          <App />
+        </HashRouter>
       </RootErrorBoundary>
     </React.StrictMode>
   );
