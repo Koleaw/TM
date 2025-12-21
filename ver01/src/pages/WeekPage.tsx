@@ -336,6 +336,87 @@ function MonthView({ weeks }: { weeks: string[] }) {
           ))
         )}
       </div>
+
+      {tab === "year" ? (
+        <div className="grid gap-4">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setSelectedYear((y) => y - 1)}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-900"
+            >
+              ← {selectedYear - 1}
+            </button>
+            <div className="text-lg font-semibold">{selectedYear}</div>
+            <button
+              onClick={() => setSelectedYear((y) => y + 1)}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-900"
+            >
+              {selectedYear + 1} →
+            </button>
+          </div>
+          <YearView year={selectedYear} weeks={horizonWeeks} />
+        </div>
+      ) : null}
+
+      {tab === "month" ? (
+        <div className="grid gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setSelectedMonth((m) => (m === 0 ? 11 : m - 1))}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-900"
+            >
+              ← {MONTH_NAMES[selectedMonth === 0 ? 11 : selectedMonth - 1]}
+            </button>
+            <div className="text-lg font-semibold">
+              {MONTH_NAMES[selectedMonth]} {selectedYear}
+            </div>
+            <button
+              onClick={() => setSelectedMonth((m) => (m === 11 ? 0 : m + 1))}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-900"
+            >
+              {MONTH_NAMES[selectedMonth === 11 ? 0 : selectedMonth + 1]} →
+            </button>
+            <button
+              onClick={() => {
+                const now = new Date();
+                setSelectedYear(now.getFullYear());
+                setSelectedMonth(now.getMonth());
+              }}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800"
+            >
+              Today month
+            </button>
+          </div>
+          <MonthView year={selectedYear} monthIndex={selectedMonth} />
+        </div>
+      ) : null}
+
+      {tab === "week" ? (
+        <div className="grid gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setWeekStart((w) => ymdAddDays(w, -7))}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-900"
+            >
+              ← Prev week
+            </button>
+            <div className="text-lg font-semibold">{weekStart}</div>
+            <button
+              onClick={() => setWeekStart((w) => ymdAddDays(w, 7))}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-900"
+            >
+              Next week →
+            </button>
+            <button
+              onClick={() => setWeekStart(baseWeek)}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800"
+            >
+              This week
+            </button>
+          </div>
+          <WeekView start={weekStart} />
+        </div>
+      ) : null}
     </div>
   );
 }

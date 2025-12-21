@@ -96,6 +96,8 @@ export type PlanTask = {
   id: ID;
   title: string;
   note: string;
+  priority: 1 | 2 | 3;
+  estimateMin: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -106,12 +108,16 @@ export type PlanWeek = {
 };
 
 export type PlansState = {
+  year: Record<string, PlanTask[]>; // key: YYYY
+  month: Record<string, PlanTask[]>; // key: YYYY-MM
   year: PlanTask[];
   month: PlanTask[];
   weeks: Record<string, PlanWeek>;
 };
 
 export type PlanLocation =
+  | { level: "year"; year: string; id: ID }
+  | { level: "month"; month: string; id: ID }
   | { level: "year"; id: ID }
   | { level: "month"; id: ID }
   | { level: "week"; weekStart: string; day: string; id: ID };
@@ -209,6 +215,16 @@ function normalizeSinkId(kind: TimeLogKind, sinkId: any): ID | null {
 }
 
 function normalizePlanTask(t: any): PlanTask {
+  const id = typeof t?.id === "string" ? t.id : uid();
+  const title = typeof t?.title === "string" ? t.title : "";
+  const note = typeof t?.note === "string" ? t.note : "";
+  const priority = t?.priority === 1 || t?.priority === 2 || t?.priority === 3 ? t.priority : 2;
+  const estimateRaw = toFiniteNumber(t?.estimateMin);
+  const estimateMin = estimateRaw !== null && estimateRaw >= 0 ? Math.round(estimateRaw) : null;
+  const createdAt = toFiniteNumber(t?.createdAt) ?? now();
+  const updatedAt = toFiniteNumber(t?.updatedAt) ?? createdAt;
+
+  return { id, title, note, priority, estimateMin, createdAt, updatedAt };
   return {
     id: String(t?.id ?? uid()),
     title: String(t?.title ?? ""),
@@ -499,7 +515,7 @@ function loadState(): AppState {
         ? (parsed as any).timeLogs.map(normalizeTimeLog)
         : DEFAULT_STATE.timeLogs,
       reviews: Array.isArray((parsed as any).reviews)
-        ? ((parsed as any).reviews as any)
+        ? ((parsed as any).reviews as any).map(normalizeReview)
         : DEFAULT_STATE.reviews,
       activeTimer: normalizeActiveTimer((parsed as any).activeTimer),
     };
@@ -590,6 +606,22 @@ function normalizeTimeLog(l: any): TimeLog {
     note: String(l.note ?? ""),
     kind,
     sinkId,
+  };
+}
+
+function normalizeReview(r: any): ReviewEntry {
+  const nowTs = now();
+  const weekStart = typeof r?.weekStart === "string" ? r.weekStart : todayYMD();
+
+  return {
+    id: typeof r?.id === "string" ? r.id : uid(),
+    weekStart,
+    wins: typeof r?.wins === "string" ? r.wins : "",
+    lessons: typeof r?.lessons === "string" ? r.lessons : "",
+    focus: typeof r?.focus === "string" ? r.focus : "",
+    next: typeof r?.next === "string" ? r.next : "",
+    createdAt: toFiniteNumber(r?.createdAt) ?? nowTs,
+    updatedAt: toFiniteNumber(r?.updatedAt) ?? nowTs,
   };
 }
 
@@ -869,7 +901,9 @@ export function importBackupJson(jsonText: string) {
     settings: { ...DEFAULT_STATE.settings, ...(parsed.settings ?? {}) },
     tasks: Array.isArray((parsed as any).tasks) ? (parsed as any).tasks.map(normalizeTask) : [],
     timeLogs: Array.isArray((parsed as any).timeLogs) ? (parsed as any).timeLogs.map(normalizeTimeLog) : [],
-    reviews: Array.isArray((parsed as any).reviews) ? (parsed as any).reviews : [],
+    reviews: Array.isArray((parsed as any).reviews)
+      ? (parsed as any).reviews.map(normalizeReview)
+      : [],
     activeTimer: normalizeActiveTimer((parsed as any).activeTimer),
   };
 
