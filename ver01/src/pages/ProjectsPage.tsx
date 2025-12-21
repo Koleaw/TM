@@ -183,6 +183,12 @@ function TaskNode({
         >
           {priorityLabel(task.priority)}
         </span>
+        {task.plannedDate && (
+          <span className="text-xs text-slate-300">
+            Запланировано на {task.plannedDate}
+            {task.plannedStart ? ` • ${task.plannedStart}` : ""}
+          </span>
+        )}
         {task.deadlineAt && (
           <span className="text-xs text-slate-300">{formatDeadline(task.deadlineAt)}</span>
         )}
@@ -227,6 +233,28 @@ function TaskNode({
                 <option value={2}>Средний</option>
                 <option value={3}>Низкий</option>
               </select>
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">План (дата)</label>
+              <input
+                type="date"
+                className="w-full rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-sm text-slate-100"
+                value={task.plannedDate ?? ""}
+                onChange={(e) =>
+                  updateTask(task.id, { plannedDate: e.target.value || null })
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">Старт (для жёстких задач)</label>
+              <input
+                type="time"
+                className="w-full rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-sm text-slate-100"
+                value={task.plannedStart ?? ""}
+                onChange={(e) =>
+                  updateTask(task.id, { plannedStart: e.target.value || null })
+                }
+              />
             </div>
             <div className="space-y-1">
               <label className="text-xs text-slate-400">Дедлайн</label>
