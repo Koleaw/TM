@@ -41,6 +41,7 @@ export type Task = {
 
   // чеклисты и подзадачи
   checklist: ChecklistItem[];
+  projectId: ID | null;
   parentId: ID | null;
 
   createdAt: number;
@@ -541,6 +542,9 @@ export function movePlanTaskToToday(loc: PlanLocation, plannedDate?: string) {
       estimateMin: taken.task.estimateMin ?? null,
       priority: taken.task.priority ?? 2,
       deadlineAt: deadlineAtFromDate(taken.task.deadlineDate),
+      checklist: [],
+      projectId: null,
+      parentId: null,
       createdAt: now(),
       updatedAt: now(),
     };
@@ -691,6 +695,7 @@ function normalizeTask(t: any): Task {
     checklist: Array.isArray((t as any).checklist)
       ? (t as any).checklist.map(normalizeChecklistItem)
       : [],
+    projectId: (t as any).projectId ? String((t as any).projectId) : null,
     parentId: (t as any).parentId ? String((t as any).parentId) : null,
     createdAt: toFiniteNumber(t.createdAt) ?? now(),
     updatedAt: toFiniteNumber(t.updatedAt) ?? now(),
@@ -756,6 +761,7 @@ export function createTask(
     priority: 2,
     deadlineAt: null,
     checklist: [],
+    projectId: null,
     parentId: null,
     createdAt: now(),
     updatedAt: now(),
@@ -788,11 +794,28 @@ export function moveTask(id: ID, plannedDate: string | null, plannedStart: strin
 }
 
 export function deleteTask(id: ID) {
-  setState((s) => ({
-    ...s,
-    tasks: s.tasks.filter((t) => t.id !== id),
-    timeLogs: s.timeLogs.filter((l) => l.taskId !== id),
-  }));
+  setState((s) => {
+    const toDelete = new Set<ID>([id]);
+    const stack = [id];
+
+    while (stack.length) {
+      const current = stack.pop()!;
+      for (const t of s.tasks) {
+        if (t.parentId === current) {
+          if (!toDelete.has(t.id)) {
+            toDelete.add(t.id);
+            stack.push(t.id);
+          }
+        }
+      }
+    }
+
+    return {
+      ...s,
+      tasks: s.tasks.filter((t) => !toDelete.has(t.id)),
+      timeLogs: s.timeLogs.filter((l) => (l.taskId ? !toDelete.has(l.taskId) : true)),
+    };
+  });
 }
 
 // ---------------- Timer / logs ----------------

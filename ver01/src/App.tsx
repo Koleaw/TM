@@ -8,6 +8,7 @@ import ReviewPage from "./pages/ReviewPage";
 import BackupPage from "./pages/BackupPage";
 import ManagePage from "./pages/ManagePage";
 import SettingsPage from "./pages/SettingsPage";
+import ProjectsPage from "./pages/ProjectsPage";
 
 function NavLink({ to, label }: { to: string; label: string }) {
   const { pathname } = useLocation();
@@ -35,6 +36,7 @@ export default function App() {
           <div className="text-lg font-semibold">TM Archangel</div>
           <div className="flex flex-wrap gap-2">
             <NavLink to="/today" label="Today" />
+            <NavLink to="/projects" label="Проекты" />
             <NavLink to="/week" label="Планы" />
             <NavLink to="/time" label="Time" />
             <NavLink to="/analytics" label="Analytics" />
@@ -49,6 +51,7 @@ export default function App() {
           <Routes>
             <Route path="/" element={<Navigate to="/today" replace />} />
             <Route path="/today" element={<TodayPage />} />
+            <Route path="/projects" element={<ProjectsPage />} />
             <Route path="/week" element={<WeekPage />} />
             <Route path="/task/:id" element={<TaskPage />} />
             <Route path="/time" element={<TimePage />} />
