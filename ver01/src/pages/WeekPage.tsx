@@ -74,6 +74,7 @@ function PlanTaskRow({
   const [draftWeek, setDraftWeek] = useState(moveTargets?.weeks?.[0] ?? (loc.level === "week" ? loc.weekStart : ""));
   const [draftMonth, setDraftMonth] = useState(moveTargets?.months?.[0] ?? "");
 
+function ActionButton({ children, ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <div className="rounded-xl border border-slate-800 bg-slate-900 p-3 grid gap-2">
       <div className="flex items-start justify-between gap-2">
@@ -120,7 +121,14 @@ function PlanTaskRow({
           </button>
           {extraActions}
         </div>
+
+        <ActionButton onClick={() => movePlanTaskToMonth(loc)}>To month</ActionButton>
+        <ActionButton onClick={() => movePlanTaskToYear(loc)}>To year</ActionButton>
+        <ActionButton onClick={() => deletePlanTask(loc)}>Delete</ActionButton>
       </div>
+    </div>
+  );
+}
 
       {onMove ? (
         <div className="flex flex-wrap gap-2 text-xs items-center">
@@ -545,8 +553,92 @@ function WeekView({ start }: { start: string }) {
                 </div>
               )}
             </div>
-          );
-        })}
+            <button
+              onClick={() => setSelectedMonth((m) => (m === 11 ? 0 : m + 1))}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-900"
+            >
+              {MONTH_NAMES[selectedMonth === 11 ? 0 : selectedMonth + 1]} →
+            </button>
+            <button
+              onClick={() => {
+                const now = new Date();
+                setSelectedYear(now.getFullYear());
+                setSelectedMonth(now.getMonth());
+              }}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800"
+            >
+              Today month
+            </button>
+          </div>
+          <MonthView year={selectedYear} monthIndex={selectedMonth} />
+        </div>
+      ) : null}
+
+      {tab === "week" ? (
+        <div className="grid gap-3">
+          <div className="flex flex-wrap items-center gap-2">
+            <button
+              onClick={() => setWeekStart((w) => ymdAddDays(w, -7))}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-900"
+            >
+              ← Prev week
+            </button>
+            <div className="text-lg font-semibold">{weekStart}</div>
+            <button
+              onClick={() => setWeekStart((w) => ymdAddDays(w, 7))}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-900"
+            >
+              Next week →
+            </button>
+            <button
+              onClick={() => setWeekStart(baseWeek)}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800"
+            >
+              This week
+            </button>
+          </div>
+          <WeekView start={weekStart} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function YearView({ weeks }: { weeks: string[] }) {
+  const s = useAppState();
+  const [draft, setDraft] = useState("");
+
+  return (
+    <div className="grid gap-3">
+      <Heading title="Year" subtitle="Major goals / Year horizon" />
+      <PlansInputRow
+        value={draft}
+        onChange={setDraft}
+        placeholder="Add yearly goal"
+        actionLabel="Add"
+        onSubmit={() => {
+          if (!draft.trim()) return;
+          addPlanTask("year", draft.trim());
+          setDraft("");
+        }}
+      />
+      <div className="grid gap-2">
+        {s.plans.year.length === 0 ? (
+          <div className="text-sm text-slate-500">No year items yet</div>
+        ) : (
+          s.plans.year.map((task) => (
+            <PlanTaskRow
+              key={task.id}
+              task={task}
+              loc={{ level: "year", id: task.id }}
+              weeks={weeks}
+              onEdit={(nextTitle) => {
+                const updated = prompt("Edit goal", nextTitle);
+                if (updated !== null) updatePlanTask({ level: "year", id: task.id }, { title: updated });
+              }}
+            />
+          ))
+        )}
       </div>
     </div>
   );
