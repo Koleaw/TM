@@ -483,14 +483,14 @@ function MonthView({ year, monthIndex }: { year: number; monthIndex: number }) {
                   </button>
                 </div>
                 <div className="overflow-x-auto pb-1">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-2 min-w-0">
+                  <div className="grid grid-flow-row grid-cols-4 xl:grid-cols-7 gap-3 min-w-max">
                     {days.map((day) => {
                       const week = s.plans.weeks[ws];
                       const list = week?.days?.[day] ?? [];
                       return (
                         <div
                           key={day}
-                          className="rounded-lg border border-slate-900 bg-slate-900/60 p-2 flex flex-col gap-2 min-w-0"
+                          className="rounded-lg border border-slate-900 bg-slate-900/60 p-2 flex flex-col gap-2 min-w-[240px]"
                         >
                           <div className="flex items-center justify-between text-xs font-semibold">
                             <span>{day}</span>
@@ -563,11 +563,14 @@ function WeekView({ start }: { start: string }) {
         </Link>
       </div>
       <div className="overflow-x-auto pb-1">
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7 gap-3 min-w-0">
+        <div className="grid grid-flow-row grid-cols-4 xl:grid-cols-7 gap-4 min-w-max">
           {days.map((day) => {
             const list = week?.days?.[day] ?? [];
             return (
-              <div key={day} className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-2 min-w-0">
+              <div
+                key={day}
+                className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-2 min-w-[240px]"
+              >
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold">{day}</div>
                   <button
