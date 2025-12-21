@@ -1936,3 +1936,13 @@ const hardToday = useMemo(
     </div>
   );
 }
+
+// re-export shared building blocks for planner views
+export {
+  TaskRow,
+  TaskEditPanel,
+  ChecklistEditor,
+  SubtaskRow,
+  parseDeadlineInput,
+  parseEstimate,
+};
