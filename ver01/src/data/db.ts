@@ -110,12 +110,16 @@ export type PlanWeek = {
 export type PlansState = {
   year: Record<string, PlanTask[]>; // key: YYYY
   month: Record<string, PlanTask[]>; // key: YYYY-MM
+  year: PlanTask[];
+  month: PlanTask[];
   weeks: Record<string, PlanWeek>;
 };
 
 export type PlanLocation =
   | { level: "year"; year: string; id: ID }
   | { level: "month"; month: string; id: ID }
+  | { level: "year"; id: ID }
+  | { level: "month"; id: ID }
   | { level: "week"; weekStart: string; day: string; id: ID };
 
 export type AppState = {
@@ -221,6 +225,13 @@ function normalizePlanTask(t: any): PlanTask {
   const updatedAt = toFiniteNumber(t?.updatedAt) ?? createdAt;
 
   return { id, title, note, priority, estimateMin, createdAt, updatedAt };
+  return {
+    id: String(t?.id ?? uid()),
+    title: String(t?.title ?? ""),
+    note: String(t?.note ?? ""),
+    createdAt: toFiniteNumber(t?.createdAt) ?? now(),
+    updatedAt: toFiniteNumber(t?.updatedAt) ?? now(),
+  };
 }
 
 function emptyWeek(weekStart: string): PlanWeek {
@@ -252,29 +263,6 @@ function normalizePlanWeek(w: any): PlanWeek {
   return { weekStart: base.weekStart, days: filled };
 }
 
-function normalizePlanBucket(raw: any, mode: "year" | "month"): Record<string, PlanTask[]> {
-  const map: Record<string, PlanTask[]> = {};
-
-  if (Array.isArray(raw)) {
-    const nowDate = new Date();
-    const yearKey = String(nowDate.getFullYear());
-    const monthKey = `${nowDate.getFullYear()}-${pad2(nowDate.getMonth() + 1)}`;
-    const target = mode === "year" ? yearKey : monthKey;
-    map[target] = raw.map(normalizePlanTask);
-    return map;
-  }
-
-  if (raw && typeof raw === "object") {
-    for (const [k, v] of Object.entries(raw as Record<string, any>)) {
-      if (typeof k === "string" && Array.isArray(v)) {
-        map[k] = v.map(normalizePlanTask);
-      }
-    }
-  }
-
-  return map;
-}
-
 function normalizePlans(p: any): PlansState {
   const safeWeeks: Record<string, PlanWeek> = {};
   if (p && typeof p === "object" && p.weeks && typeof p.weeks === "object") {
@@ -287,8 +275,8 @@ function normalizePlans(p: any): PlansState {
   }
 
   return {
-    year: normalizePlanBucket((p as any)?.year, "year"),
-    month: normalizePlanBucket((p as any)?.month, "month"),
+    year: Array.isArray(p?.year) ? p.year.map(normalizePlanTask) : [],
+    month: Array.isArray(p?.month) ? p.month.map(normalizePlanTask) : [],
     weeks: safeWeeks,
   };
 }
@@ -301,52 +289,17 @@ function ensureWeekDays(plans: PlansState, weekStart: string): PlansState {
   return { ...plans, weeks: { ...plans.weeks, [weekStart]: normalized } };
 }
 
-function ensureYearBucket(plans: PlansState, year: string): PlansState {
-  if (plans.year[year]) return plans;
-  return { ...plans, year: { ...plans.year, [year]: [] } };
-}
-
-function ensureMonthBucket(plans: PlansState, month: string): PlansState {
-  if (plans.month[month]) return plans;
-  return { ...plans, month: { ...plans.month, [month]: [] } };
-}
-
-type PlanTaskInput = {
-  title: string;
-  note?: string;
-  priority?: 1 | 2 | 3;
-  estimateMin?: number | null;
-};
-
-function buildPlanTask(input: PlanTaskInput): PlanTask {
-  const estimateRaw = toFiniteNumber(input.estimateMin);
-  const estimateMin = estimateRaw !== null && estimateRaw >= 0 ? Math.round(estimateRaw) : null;
-  return {
-    id: uid(),
-    title: input.title.trim(),
-    note: input.note?.trim?.() ?? "",
-    priority: input.priority === 1 || input.priority === 3 ? input.priority : 2,
-    estimateMin,
-    createdAt: now(),
-    updatedAt: now(),
-  };
-}
-
 function takePlanTask(plans: PlansState, loc: PlanLocation): { task: PlanTask | null; plans: PlansState } {
   if (loc.level === "year") {
-    const normalized = ensureYearBucket(plans, loc.year);
-    const bucket = normalized.year[loc.year] ?? [];
-    const remaining = bucket.filter((t) => t.id !== loc.id);
-    const task = bucket.find((t) => t.id === loc.id) ?? null;
-    return { task, plans: { ...normalized, year: { ...normalized.year, [loc.year]: remaining } } };
+    const nextYear = plans.year.filter((t) => t.id !== loc.id);
+    const task = plans.year.find((t) => t.id === loc.id) ?? null;
+    return { task, plans: { ...plans, year: nextYear } };
   }
 
   if (loc.level === "month") {
-    const normalized = ensureMonthBucket(plans, loc.month);
-    const bucket = normalized.month[loc.month] ?? [];
-    const remaining = bucket.filter((t) => t.id !== loc.id);
-    const task = bucket.find((t) => t.id === loc.id) ?? null;
-    return { task, plans: { ...normalized, month: { ...normalized.month, [loc.month]: remaining } } };
+    const nextMonth = plans.month.filter((t) => t.id !== loc.id);
+    const task = plans.month.find((t) => t.id === loc.id) ?? null;
+    return { task, plans: { ...plans, month: nextMonth } };
   }
 
   const safePlans = ensureWeekDays(plans, loc.weekStart);
@@ -364,18 +317,6 @@ function takePlanTask(plans: PlansState, loc: PlanLocation): { task: PlanTask | 
   };
 }
 
-function placeTaskInYear(plans: PlansState, year: string, task: PlanTask): PlansState {
-  const normalized = ensureYearBucket(plans, year);
-  const list = normalized.year[year] ?? [];
-  return { ...normalized, year: { ...normalized.year, [year]: [{ ...task, updatedAt: now() }, ...list] } };
-}
-
-function placeTaskInMonth(plans: PlansState, month: string, task: PlanTask): PlansState {
-  const normalized = ensureMonthBucket(plans, month);
-  const list = normalized.month[month] ?? [];
-  return { ...normalized, month: { ...normalized.month, [month]: [{ ...task, updatedAt: now() }, ...list] } };
-}
-
 function placeTaskInWeek(plans: PlansState, weekStart: string, day: string, task: PlanTask): PlansState {
   const normalized = ensureWeekDays(plans, weekStart);
   const safeWeek = normalized.weeks[weekStart];
@@ -391,28 +332,32 @@ function placeTaskInWeek(plans: PlansState, weekStart: string, day: string, task
   return { ...normalized, weeks: { ...normalized.weeks, [weekStart]: updatedWeek } };
 }
 
-export function addPlanYearTask(year: string, input: PlanTaskInput): ID {
-  const trimmed = input.title.trim();
+function placeTaskInMonth(plans: PlansState, task: PlanTask): PlansState {
+  return { ...plans, month: [{ ...task, updatedAt: now() }, ...plans.month] };
+}
+
+function placeTaskInYear(plans: PlansState, task: PlanTask): PlansState {
+  return { ...plans, year: [{ ...task, updatedAt: now() }, ...plans.year] };
+}
+
+export function addPlanTask(level: "year" | "month", title: string, note: string = ""): ID {
+  const trimmed = title.trim();
   if (!trimmed) return uid();
-  const task = buildPlanTask({ ...input, title: trimmed });
-  setState((s) => ({ ...s, plans: placeTaskInYear(s.plans, year, task) }));
-  setLastAction("plan.add.year");
+  const task: PlanTask = { id: uid(), title: trimmed, note, createdAt: now(), updatedAt: now() };
+
+  setState((s) => {
+    const plans = level === "year" ? placeTaskInYear(s.plans, task) : placeTaskInMonth(s.plans, task);
+    return { ...s, plans };
+  });
+
+  setLastAction(`plan.add.${level}`);
   return task.id;
 }
 
-export function addPlanMonthTask(month: string, input: PlanTaskInput): ID {
-  const trimmed = input.title.trim();
+export function addPlanWeekTask(weekStart: string, day: string, title: string, note: string = ""): ID {
+  const trimmed = title.trim();
   if (!trimmed) return uid();
-  const task = buildPlanTask({ ...input, title: trimmed });
-  setState((s) => ({ ...s, plans: placeTaskInMonth(s.plans, month, task) }));
-  setLastAction("plan.add.month");
-  return task.id;
-}
-
-export function addPlanWeekTask(weekStart: string, day: string, input: PlanTaskInput): ID {
-  const trimmed = input.title.trim();
-  if (!trimmed) return uid();
-  const task = buildPlanTask({ ...input, title: trimmed });
+  const task: PlanTask = { id: uid(), title: trimmed, note, createdAt: now(), updatedAt: now() };
   setState((s) => ({ ...s, plans: placeTaskInWeek(s.plans, weekStart, day, task) }));
   setLastAction("plan.add.week");
   return task.id;
@@ -428,21 +373,21 @@ export function movePlanTaskToWeek(loc: PlanLocation, weekStart: string, day: st
   setLastAction("plan.move.toWeek");
 }
 
-export function movePlanTaskToMonth(loc: PlanLocation, month: string) {
+export function movePlanTaskToMonth(loc: PlanLocation) {
   setState((s) => {
     const taken = takePlanTask(s.plans, loc);
     if (!taken.task) return s;
-    const plans = placeTaskInMonth(taken.plans, month, taken.task);
+    const plans = placeTaskInMonth(taken.plans, taken.task);
     return { ...s, plans };
   });
   setLastAction("plan.move.toMonth");
 }
 
-export function movePlanTaskToYear(loc: PlanLocation, year: string) {
+export function movePlanTaskToYear(loc: PlanLocation) {
   setState((s) => {
     const taken = takePlanTask(s.plans, loc);
     if (!taken.task) return s;
-    const plans = placeTaskInYear(taken.plans, year, taken.task);
+    const plans = placeTaskInYear(taken.plans, taken.task);
     return { ...s, plans };
   });
   setLastAction("plan.move.toYear");
@@ -452,10 +397,7 @@ export function movePlanTaskWithinWeek(loc: Extract<PlanLocation, { level: "week
   movePlanTaskToWeek(loc, loc.weekStart, day);
 }
 
-export function updatePlanTask(
-  loc: PlanLocation,
-  patch: Partial<Pick<PlanTask, "title" | "note" | "priority" | "estimateMin">>
-) {
+export function updatePlanTask(loc: PlanLocation, patch: Partial<Pick<PlanTask, "title" | "note">>) {
   setState((s) => {
     const taken = takePlanTask(s.plans, loc);
     if (!taken.task) return s;
@@ -463,21 +405,11 @@ export function updatePlanTask(
       ...taken.task,
       ...patch,
       title: patch.title?.trim() ?? taken.task.title,
-      priority:
-        patch.priority === 1 || patch.priority === 2 || patch.priority === 3
-          ? patch.priority
-          : taken.task.priority,
-      estimateMin:
-        patch.estimateMin === null
-          ? null
-          : toFiniteNumber(patch.estimateMin) !== null
-          ? Math.max(0, Math.round(toFiniteNumber(patch.estimateMin)!))
-          : taken.task.estimateMin,
       updatedAt: now(),
     };
 
-    if (loc.level === "year") return { ...s, plans: placeTaskInYear(taken.plans, loc.year, nextTask) };
-    if (loc.level === "month") return { ...s, plans: placeTaskInMonth(taken.plans, loc.month, nextTask) };
+    if (loc.level === "year") return { ...s, plans: placeTaskInYear(taken.plans, nextTask) };
+    if (loc.level === "month") return { ...s, plans: placeTaskInMonth(taken.plans, nextTask) };
     return { ...s, plans: placeTaskInWeek(taken.plans, loc.weekStart, loc.day, nextTask) };
   });
   setLastAction("plan.update");
@@ -505,8 +437,8 @@ export function movePlanTaskToToday(loc: PlanLocation, plannedDate?: string) {
       status: "todo",
       plannedDate: date,
       plannedStart: null,
-      estimateMin: taken.task.estimateMin ?? null,
-      priority: taken.task.priority ?? 2,
+      estimateMin: null,
+      priority: 2,
       deadlineAt: null,
       createdAt: now(),
       updatedAt: now(),
@@ -541,7 +473,7 @@ const DEFAULT_STATE: AppState = {
     ],
   },
   reviews: [],
-  plans: { year: {}, month: {}, weeks: {} },
+  plans: { year: [], month: [], weeks: {} },
   settings: {
     weekStartsOn: 1,
     dayStartHour: 8,
