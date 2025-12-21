@@ -1488,7 +1488,9 @@ export default function TodayPage() {
             t.status !== "done" &&
             t.plannedDate == null &&
             t.deadlineAt == null &&
-            t.parentId == null
+            t.parentId == null &&
+            t.projectId == null &&
+            !t.isProject
         )
         .sort((a, b) => (a.priority ?? 2) - (b.priority ?? 2) || b.updatedAt - a.updatedAt),
     [s.tasks]

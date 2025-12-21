@@ -243,7 +243,10 @@ export default function PlansPage() {
     return { year: d.getFullYear(), monthIndex: d.getMonth() };
   });
 
-  const tasksRoot = useMemo(() => s.tasks.filter((t) => t.parentId == null), [s.tasks]);
+  const tasksRoot = useMemo(
+    () => s.tasks.filter((t) => t.parentId == null && !t.isProject),
+    [s.tasks]
+  );
   const childrenByParentId = useMemo(() => {
     const m: Record<string, Task[]> = {};
     for (const t of s.tasks) {
