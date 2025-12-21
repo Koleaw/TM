@@ -43,6 +43,7 @@ export type Task = {
   checklist: ChecklistItem[];
   projectId: ID | null;
   parentId: ID | null;
+  isProject: boolean;
 
   createdAt: number;
   updatedAt: number;
@@ -545,6 +546,7 @@ export function movePlanTaskToToday(loc: PlanLocation, plannedDate?: string) {
       checklist: [],
       projectId: null,
       parentId: null,
+      isProject: false,
       createdAt: now(),
       updatedAt: now(),
     };
@@ -607,18 +609,28 @@ function loadState(): AppState {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return DEFAULT_STATE;
 
-    const merged: AppState = {
-      ...DEFAULT_STATE,
-      ...parsed,
-      lists: { ...DEFAULT_STATE.lists, ...(parsed.lists ?? {}) },
-      settings: { ...DEFAULT_STATE.settings, ...(parsed.settings ?? {}) },
-      plans: normalizePlans((parsed as any).plans ?? {}),
-      tasks: Array.isArray((parsed as any).tasks)
-        ? (parsed as any).tasks.map(normalizeTask)
-        : DEFAULT_STATE.tasks,
-      timeLogs: Array.isArray((parsed as any).timeLogs)
-        ? (parsed as any).timeLogs.map(normalizeTimeLog)
-        : DEFAULT_STATE.timeLogs,
+  const merged: AppState = {
+    ...DEFAULT_STATE,
+    ...parsed,
+    lists: { ...DEFAULT_STATE.lists, ...(parsed.lists ?? {}) },
+    settings: { ...DEFAULT_STATE.settings, ...(parsed.settings ?? {}) },
+    plans: normalizePlans((parsed as any).plans ?? {}),
+    tasks: Array.isArray((parsed as any).tasks)
+      ? (() => {
+          const normalized = (parsed as any).tasks.map(normalizeTask);
+          const referenced = new Set(
+            normalized
+              .map((t) => t.projectId)
+              .filter((pid): pid is string => typeof pid === "string")
+          );
+          return normalized.map((t) =>
+            referenced.has(t.id) ? { ...t, isProject: true } : t
+          );
+        })()
+      : DEFAULT_STATE.tasks,
+    timeLogs: Array.isArray((parsed as any).timeLogs)
+      ? (parsed as any).timeLogs.map(normalizeTimeLog)
+      : DEFAULT_STATE.timeLogs,
       reviews: Array.isArray((parsed as any).reviews)
         ? ((parsed as any).reviews as any).map(normalizeReview)
         : DEFAULT_STATE.reviews,
@@ -683,7 +695,7 @@ function normalizeChecklistItem(it: any): ChecklistItem {
 function normalizeTask(t: any): Task {
   return {
     id: String(t.id ?? uid()),
-    title: String(t.title ?? "Без названия"),
+    title: typeof t.title === "string" ? t.title : "",
     notes: String(t.notes ?? ""),
     tags: Array.isArray(t.tags) ? t.tags.map(String) : [],
     status: t.status === "done" ? "done" : "todo",
@@ -697,6 +709,7 @@ function normalizeTask(t: any): Task {
       : [],
     projectId: (t as any).projectId ? String((t as any).projectId) : null,
     parentId: (t as any).parentId ? String((t as any).parentId) : null,
+    isProject: (t as any).isProject === true,
     createdAt: toFiniteNumber(t.createdAt) ?? now(),
     updatedAt: toFiniteNumber(t.updatedAt) ?? now(),
   };
@@ -751,7 +764,7 @@ export function createTask(
 ): ID {
   const t: Task = {
     id: uid(),
-    title: title.trim() || "Без названия",
+    title: typeof title === "string" ? title : "",
     notes: "",
     tags: [],
     status: "todo",
@@ -763,6 +776,7 @@ export function createTask(
     checklist: [],
     projectId: null,
     parentId: null,
+    isProject: false,
     createdAt: now(),
     updatedAt: now(),
     ...(opts ?? {}),
@@ -776,11 +790,21 @@ export function createTask(
   return t.id;
 }
 
+export function createProject(title: string = ""): ID {
+  const id = createTask(title, { isProject: true, projectId: null, parentId: null });
+  setLastAction("project.create");
+  return id;
+}
+
 export function updateTask(id: ID, patch: Partial<Task>) {
   setState((s) => ({
     ...s,
     tasks: s.tasks.map((t) => (t.id === id ? { ...t, ...patch, updatedAt: now() } : t)),
   }));
+}
+
+export function updateProject(id: ID, patch: Partial<Task>) {
+  updateTask(id, { ...patch, isProject: true, projectId: null, parentId: null });
 }
 
 export function toggleDone(id: ID) {
@@ -816,6 +840,34 @@ export function deleteTask(id: ID) {
       timeLogs: s.timeLogs.filter((l) => (l.taskId ? !toDelete.has(l.taskId) : true)),
     };
   });
+}
+
+export function deleteProject(id: ID) {
+  setState((s) => {
+    const toDelete = new Set<ID>([id]);
+
+    for (const t of s.tasks) {
+      if (t.projectId === id) toDelete.add(t.id);
+    }
+
+    let expanded = true;
+    while (expanded) {
+      expanded = false;
+      for (const t of s.tasks) {
+        if (t.parentId && toDelete.has(t.parentId) && !toDelete.has(t.id)) {
+          toDelete.add(t.id);
+          expanded = true;
+        }
+      }
+    }
+
+    return {
+      ...s,
+      tasks: s.tasks.filter((t) => !toDelete.has(t.id)),
+      timeLogs: s.timeLogs.filter((l) => (l.taskId ? !toDelete.has(l.taskId) : true)),
+    };
+  });
+  setLastAction("project.delete");
 }
 
 // ---------------- Timer / logs ----------------
