@@ -104,6 +104,7 @@ export type PlanTask = {
   note: string;
   priority: 1 | 2 | 3;
   estimateMin: number | null;
+  deadlineDate: string | null; // YYYY-MM-DD
   createdAt: number;
   updatedAt: number;
 };
@@ -216,6 +217,26 @@ function normalizeSinkId(kind: TimeLogKind, sinkId: any): ID | null {
   return sinkId === null || typeof sinkId === "string" ? sinkId : null;
 }
 
+function normalizeDateInput(raw: any): string | null {
+  if (typeof raw !== "string") return null;
+  const trimmed = raw.trim();
+  if (!trimmed) return null;
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(trimmed);
+  if (!match) return null;
+  const y = Number(match[1]);
+  const m = Number(match[2]);
+  const d = Number(match[3]);
+  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
+function deadlineAtFromDate(date: string | null): number | null {
+  if (!date) return null;
+  const [y, m, d] = date.split("-").map(Number);
+  if (!Number.isFinite(y) || !Number.isFinite(m) || !Number.isFinite(d)) return null;
+  return new Date(y, m - 1, d, 23, 59, 59, 999).getTime();
+}
+
 function normalizePlanTask(t: any): PlanTask {
   const id = typeof t?.id === "string" ? t.id : uid();
   const title = typeof t?.title === "string" ? t.title : "";
@@ -223,10 +244,11 @@ function normalizePlanTask(t: any): PlanTask {
   const priority = t?.priority === 1 || t?.priority === 2 || t?.priority === 3 ? t.priority : 2;
   const estimateRaw = toFiniteNumber(t?.estimateMin);
   const estimateMin = estimateRaw !== null && estimateRaw >= 0 ? Math.round(estimateRaw) : null;
+  const deadlineDate = normalizeDateInput(t?.deadlineDate);
   const createdAt = toFiniteNumber(t?.createdAt) ?? now();
   const updatedAt = toFiniteNumber(t?.updatedAt) ?? createdAt;
 
-  return { id, title, note, priority, estimateMin, createdAt, updatedAt };
+  return { id, title, note, priority, estimateMin, deadlineDate, createdAt, updatedAt };
 }
 
 function emptyWeek(weekStart: string): PlanWeek {
@@ -322,6 +344,7 @@ type PlanTaskInput = {
   note?: string;
   priority?: 1 | 2 | 3;
   estimateMin?: number | null;
+  deadlineDate?: string | null;
 };
 
 function buildPlanTask(input: PlanTaskInput): PlanTask {
@@ -333,6 +356,7 @@ function buildPlanTask(input: PlanTaskInput): PlanTask {
     note: input.note?.trim?.() ?? "",
     priority: input.priority === 1 || input.priority === 3 ? input.priority : 2,
     estimateMin,
+    deadlineDate: normalizeDateInput(input.deadlineDate ?? null),
     createdAt: now(),
     updatedAt: now(),
   };
@@ -460,7 +484,7 @@ export function movePlanTaskWithinWeek(loc: Extract<PlanLocation, { level: "week
 
 export function updatePlanTask(
   loc: PlanLocation,
-  patch: Partial<Pick<PlanTask, "title" | "note" | "priority" | "estimateMin">>
+  patch: Partial<Pick<PlanTask, "title" | "note" | "priority" | "estimateMin" | "deadlineDate">>
 ) {
   setState((s) => {
     const taken = takePlanTask(s.plans, loc);
@@ -479,6 +503,9 @@ export function updatePlanTask(
           : toFiniteNumber(patch.estimateMin) !== null
           ? Math.max(0, Math.round(toFiniteNumber(patch.estimateMin)!))
           : taken.task.estimateMin,
+      deadlineDate: normalizeDateInput(
+        patch.deadlineDate === undefined ? taken.task.deadlineDate : patch.deadlineDate
+      ),
       updatedAt: now(),
     };
 
@@ -513,7 +540,7 @@ export function movePlanTaskToToday(loc: PlanLocation, plannedDate?: string) {
       plannedStart: null,
       estimateMin: taken.task.estimateMin ?? null,
       priority: taken.task.priority ?? 2,
-      deadlineAt: null,
+      deadlineAt: deadlineAtFromDate(taken.task.deadlineDate),
       createdAt: now(),
       updatedAt: now(),
     };
