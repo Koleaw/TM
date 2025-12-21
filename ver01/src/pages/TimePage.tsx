@@ -14,7 +14,9 @@ function pad2(n: number) {
 }
 
 function toLocalDateTimeInput(ms: number) {
-  const d = new Date(ms);
+  const t = Number(ms);
+  if (!Number.isFinite(t)) return "";
+  const d = new Date(t);
   const y = d.getFullYear();
   const m = pad2(d.getMonth() + 1);
   const day = pad2(d.getDate());
@@ -24,8 +26,22 @@ function toLocalDateTimeInput(ms: number) {
 }
 
 function parseLocalDateTimeInput(v: string) {
-  const t = new Date(v).getTime();
-  return Number.isFinite(t) ? t : NaN;
+  const s = (v ?? "").trim();
+  if (!s) return NaN;
+
+  const m = s.match(/^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?$/);
+  if (!m) return NaN;
+
+  const year = Number(m[1]);
+  const month = Number(m[2]) - 1;
+  const day = Number(m[3]);
+  const hour = m[4] != null ? Number(m[4]) : 0;
+  const minute = m[5] != null ? Number(m[5]) : 0;
+  const second = m[6] != null ? Number(m[6]) : 0;
+
+  const dt = new Date(year, month, day, hour, minute, second, 0);
+  const ts = dt.getTime();
+  return Number.isFinite(ts) ? ts : NaN;
 }
 
 function fmtDuration(mins: number) {
