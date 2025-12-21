@@ -19,18 +19,18 @@ import {
 } from "../data/db";
 
 const MONTH_NAMES = [
-  "Jan",
-  "Feb",
-  "Mar",
-  "Apr",
-  "May",
-  "Jun",
-  "Jul",
-  "Aug",
-  "Sep",
-  "Oct",
-  "Nov",
-  "Dec",
+  "Янв",
+  "Фев",
+  "Мар",
+  "Апр",
+  "Май",
+  "Июн",
+  "Июл",
+  "Авг",
+  "Сен",
+  "Окт",
+  "Ноя",
+  "Дек",
 ];
 
 function pad2(n: number) {
@@ -66,9 +66,7 @@ function PlanTaskCard({
 }) {
   const [selectedMonth, setSelectedMonth] = useState(moveTargets?.months?.[0] ?? "");
   const [selectedWeek, setSelectedWeek] = useState(moveTargets?.weeks?.[0] ?? "");
-  const [selectedDay, setSelectedDay] = useState(
-    selectedWeek ? weekDays(selectedWeek)[0] : todayYMD()
-  );
+  const [selectedDay, setSelectedDay] = useState(selectedWeek ? weekDays(selectedWeek)[0] : todayYMD());
 
   const dayOptions = selectedWeek ? weekDays(selectedWeek) : [];
 
@@ -87,68 +85,75 @@ function PlanTaskCard({
   }, [selectedWeek]);
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-2">
-      <div className="flex items-start justify-between gap-3">
-        <div className="flex flex-col gap-1 min-w-0">
-          <div className="flex items-center gap-2">
-            <span
-              className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${priorityBadge(
-                task.priority
-              )}`}
-            >
-              P{task.priority}
-            </span>
-            <div className="text-sm font-semibold break-words">{task.title || "Без названия"}</div>
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-3">
+      <div className="flex flex-col gap-2">
+        <div className="flex items-start justify-between gap-3">
+          <div className="flex flex-col gap-1 min-w-0">
+            <div className="flex items-center gap-2">
+              <span
+                className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-semibold ${priorityBadge(task.priority)}`}
+              >
+                P{task.priority}
+              </span>
+              <div className="text-sm font-semibold break-words">{task.title || "Без названия"}</div>
+            </div>
+            {task.note ? <div className="text-xs text-slate-400 whitespace-pre-wrap">{task.note}</div> : null}
+            <div className="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+              {task.estimateMin ? <span>Оценка: {task.estimateMin} мин</span> : null}
+              {task.deadlineDate ? (
+                <span className="inline-flex items-center gap-1 rounded-md bg-rose-500/10 px-2 py-0.5 text-rose-200">
+                  ⏰ дедлайн {task.deadlineDate}
+                </span>
+              ) : null}
+            </div>
           </div>
-          {task.note ? <div className="text-xs text-slate-400 whitespace-pre-wrap">{task.note}</div> : null}
-          {task.estimateMin ? (
-            <div className="text-[11px] text-slate-400">{task.estimateMin} мин</div>
-          ) : null}
-        </div>
-        <div className="flex flex-wrap gap-2 justify-end">
-          <button
-            onClick={() => {
-              const nextTitle = prompt("Edit title", task.title);
-              if (nextTitle !== null) updatePlanTask(loc, { title: nextTitle });
-              const nextNote = prompt("Edit note", task.note ?? "");
-              if (nextNote !== null) updatePlanTask(loc, { note: nextNote });
-            }}
-            className="rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-xs hover:bg-slate-800"
-          >
-            Edit
-          </button>
-          <select
-            value={task.priority}
-            onChange={(e) =>
-              updatePlanTask(loc, { priority: Number(e.target.value) as 1 | 2 | 3 })
-            }
-            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs"
-          >
-            <option value={1}>P1</option>
-            <option value={2}>P2</option>
-            <option value={3}>P3</option>
-          </select>
-          <input
-            value={task.estimateMin ?? ""}
-            onChange={(e) =>
-              updatePlanTask(loc, { estimateMin: e.target.value ? Number(e.target.value) : null })
-            }
-            inputMode="numeric"
-            className="w-16 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs"
-            placeholder="Est"
-          />
-          <button
-            onClick={onMoveToToday}
-            className="rounded-lg border border-emerald-500 bg-emerald-600/10 px-2 py-1 text-xs text-emerald-100 hover:bg-emerald-600/20"
-          >
-            Move to Today
-          </button>
-          <button
-            onClick={() => deletePlanTask(loc)}
-            className="rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-xs hover:bg-slate-800"
-          >
-            Delete
-          </button>
+          <div className="flex flex-wrap gap-2 justify-end">
+            <button
+              onClick={() => {
+                const nextTitle = prompt("Редактировать название", task.title);
+                if (nextTitle !== null) updatePlanTask(loc, { title: nextTitle });
+                const nextNote = prompt("Редактировать заметку", task.note ?? "");
+                if (nextNote !== null) updatePlanTask(loc, { note: nextNote });
+              }}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-xs hover:bg-slate-800"
+            >
+              Редактировать
+            </button>
+            <select
+              value={task.priority}
+              onChange={(e) => updatePlanTask(loc, { priority: Number(e.target.value) as 1 | 2 | 3 })}
+              className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs"
+            >
+              <option value={1}>Высокий</option>
+              <option value={2}>Средний</option>
+              <option value={3}>Низкий</option>
+            </select>
+            <input
+              value={task.estimateMin ?? ""}
+              onChange={(e) => updatePlanTask(loc, { estimateMin: e.target.value ? Number(e.target.value) : null })}
+              inputMode="numeric"
+              className="w-20 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs"
+              placeholder="Мин"
+            />
+            <input
+              type="date"
+              value={task.deadlineDate ?? ""}
+              onChange={(e) => updatePlanTask(loc, { deadlineDate: e.target.value || null })}
+              className="w-32 rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs"
+            />
+            <button
+              onClick={onMoveToToday}
+              className="rounded-lg border border-emerald-500 bg-emerald-600/10 px-2 py-1 text-xs text-emerald-100 hover:bg-emerald-600/20"
+            >
+              В Сегодня
+            </button>
+            <button
+              onClick={() => deletePlanTask(loc)}
+              className="rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-xs hover:bg-slate-800"
+            >
+              Удалить
+            </button>
+          </div>
         </div>
       </div>
 
@@ -171,7 +176,7 @@ function PlanTaskCard({
                 onClick={() => onMove({ month: selectedMonth })}
                 className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 hover:bg-slate-900"
               >
-                Move to month
+                В месяц
               </button>
             </>
           ) : null}
@@ -204,7 +209,7 @@ function PlanTaskCard({
                 onClick={() => onMove({ weekStart: selectedWeek, day: selectedDay })}
                 className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 hover:bg-slate-900"
               >
-                Move to week
+                В неделю
               </button>
             </>
           ) : null}
@@ -219,12 +224,19 @@ function PlanTaskForm({
   placeholder,
 }: {
   placeholder: string;
-  onSubmit: (payload: { title: string; note: string; priority: 1 | 2 | 3; estimateMin: number | null }) => void;
+  onSubmit: (payload: {
+    title: string;
+    note: string;
+    priority: 1 | 2 | 3;
+    estimateMin: number | null;
+    deadlineDate: string | null;
+  }) => void;
 }) {
   const [title, setTitle] = useState("");
   const [note, setNote] = useState("");
   const [priority, setPriority] = useState<1 | 2 | 3>(2);
   const [estimate, setEstimate] = useState("");
+  const [deadline, setDeadline] = useState("");
 
   return (
     <div className="grid gap-2">
@@ -237,26 +249,32 @@ function PlanTaskForm({
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
-        placeholder="Notes (optional)"
+        placeholder="Заметка (опционально)"
         className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm"
       />
-      <div className="flex flex-wrap items-center gap-2">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-[auto_auto_auto_1fr] md:items-center">
         <select
           value={priority}
           onChange={(e) => setPriority(Number(e.target.value) as 1 | 2 | 3)}
           className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-sm"
         >
-          <option value={1}>Priority 1</option>
-          <option value={2}>Priority 2</option>
-          <option value={3}>Priority 3</option>
+          <option value={1}>Высокий</option>
+          <option value={2}>Средний</option>
+          <option value={3}>Низкий</option>
         </select>
         <input
           value={estimate}
           onChange={(e) => setEstimate(e.target.value)}
           inputMode="numeric"
           pattern="[0-9]*"
-          placeholder="Est (min)"
+          placeholder="Оценка (мин)"
           className="w-28 rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-sm"
+        />
+        <input
+          type="date"
+          value={deadline}
+          onChange={(e) => setDeadline(e.target.value)}
+          className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-sm"
         />
         <button
           onClick={() => {
@@ -267,15 +285,17 @@ function PlanTaskForm({
               note: note.trim(),
               priority,
               estimateMin: estimate ? Number(estimate) : null,
+              deadlineDate: deadline || null,
             });
             setTitle("");
             setNote("");
             setEstimate("");
             setPriority(2);
+            setDeadline("");
           }}
           className="rounded-lg border border-emerald-500 bg-emerald-600/10 px-3 py-2 text-sm text-emerald-100 hover:bg-emerald-600/20"
         >
-          Add
+          Добавить
         </button>
       </div>
     </div>
@@ -291,16 +311,16 @@ function YearView({ year }: { year: number }) {
   return (
     <div className="grid gap-6">
       <div className="grid gap-3 rounded-xl border border-slate-800 bg-slate-950 p-4">
-        <div className="text-lg font-semibold">Year focus</div>
+        <div className="text-lg font-semibold">Фокус года</div>
         <PlanTaskForm
-          placeholder="Add yearly focus"
-          onSubmit={({ title, note, priority, estimateMin }) =>
-            addPlanYearTask(yearKey, { title, note, priority, estimateMin })
+          placeholder="Добавить задачу года"
+          onSubmit={({ title, note, priority, estimateMin, deadlineDate }) =>
+            addPlanYearTask(yearKey, { title, note, priority, estimateMin, deadlineDate })
           }
         />
         <div className="grid gap-2">
           {yearList.length === 0 ? (
-            <div className="text-sm text-slate-500">No year items yet</div>
+            <div className="text-sm text-slate-500">Пока нет задач на год</div>
           ) : (
             yearList.map((task) => (
               <PlanTaskCard
@@ -321,7 +341,7 @@ function YearView({ year }: { year: number }) {
       </div>
 
       <div className="grid gap-3">
-        <div className="text-lg font-semibold">Months in {year}</div>
+        <div className="text-lg font-semibold">Месяцы {year}</div>
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
           {MONTH_NAMES.map((name, idx) => {
             const mKey = monthKey(year, idx);
@@ -334,18 +354,18 @@ function YearView({ year }: { year: number }) {
                     to="/today"
                     className="text-[11px] text-emerald-300 hover:text-emerald-200"
                   >
-                    Move via Today
+                    Перенести через Сегодня
                   </Link>
                 </div>
                 <PlanTaskForm
-                  placeholder={`Add plan for ${name}`}
-                  onSubmit={({ title, note, priority, estimateMin }) =>
-                    addPlanMonthTask(mKey, { title, note, priority, estimateMin })
+                  placeholder={`Добавить задачу на ${name}`}
+                  onSubmit={({ title, note, priority, estimateMin, deadlineDate }) =>
+                    addPlanMonthTask(mKey, { title, note, priority, estimateMin, deadlineDate })
                   }
                 />
                 <div className="grid gap-2">
                   {monthList.length === 0 ? (
-                    <div className="text-xs text-slate-500">No items</div>
+                    <div className="text-xs text-slate-500">Задач нет</div>
                   ) : (
                     monthList.map((task) => (
                       <PlanTaskCard
@@ -402,18 +422,18 @@ function MonthView({ year, monthIndex }: { year: number; monthIndex: number }) {
     <div className="grid gap-6">
       <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 grid gap-3">
         <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-lg font-semibold">{monthLabel} focus</div>
-          <div className="text-xs text-slate-400">Plan → move into weeks → Today</div>
+          <div className="text-lg font-semibold">Фокус месяца {monthLabel}</div>
+          <div className="text-xs text-slate-400">Месяц → недели → Сегодня</div>
         </div>
         <PlanTaskForm
-          placeholder={`Add plan for ${monthLabel}`}
-          onSubmit={({ title, note, priority, estimateMin }) =>
-            addPlanMonthTask(monthKeyValue, { title, note, priority, estimateMin })
+          placeholder={`Добавить задачу в месяц (${monthLabel})`}
+          onSubmit={({ title, note, priority, estimateMin, deadlineDate }) =>
+            addPlanMonthTask(monthKeyValue, { title, note, priority, estimateMin, deadlineDate })
           }
         />
         <div className="grid gap-2">
           {monthList.length === 0 ? (
-            <div className="text-sm text-slate-500">No month items yet</div>
+            <div className="text-sm text-slate-500">Задач на месяц пока нет</div>
           ) : (
             monthList.map((task) => (
               <PlanTaskCard
@@ -440,61 +460,80 @@ function MonthView({ year, monthIndex }: { year: number; monthIndex: number }) {
       </div>
 
       <div className="grid gap-3">
-        <div className="text-lg font-semibold">Weeks inside {monthLabel}</div>
-        <div className="grid gap-3 lg:grid-cols-2">
+        <div className="text-lg font-semibold">Недели внутри {monthLabel}</div>
+        <div className="grid gap-3">
           {weekStarts.map((ws) => {
             const days = weekDays(ws);
             return (
               <div key={ws} className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-2">
                 <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold">Week of {ws}</div>
+                  <div className="text-sm font-semibold">Неделя от {ws}</div>
                   <button
-                    onClick={() => addPlanWeekTask(ws, days[0], { title: "New task", priority: 2, estimateMin: null })}
+                    onClick={() =>
+                      addPlanWeekTask(ws, days[0], {
+                        title: "Быстрая задача",
+                        priority: 2,
+                        estimateMin: null,
+                        deadlineDate: null,
+                      })
+                    }
                     className="rounded-lg border border-slate-800 bg-slate-900 px-2 py-1 text-xs hover:bg-slate-800"
                   >
-                    Quick add
+                    Быстро добавить
                   </button>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                  {days.map((day) => {
-                    const week = s.plans.weeks[ws];
-                    const list = week?.days?.[day] ?? [];
-                    return (
-                      <div key={day} className="rounded-lg border border-slate-900 bg-slate-900/60 p-2 grid gap-2">
-                        <div className="flex items-center justify-between text-xs font-semibold">
-                          <span>{day}</span>
-                          <button
-                            onClick={() => addPlanWeekTask(ws, day, { title: "Quick task", priority: 2, estimateMin: null })}
-                            className="rounded-md border border-slate-800 bg-slate-950 px-2 py-1 hover:bg-slate-900"
-                          >
-                            +
-                          </button>
-                        </div>
-                        <PlanTaskForm
-                          placeholder="Add task"
-                          onSubmit={({ title, note, priority, estimateMin }) =>
-                            addPlanWeekTask(ws, day, { title, note, priority, estimateMin })
-                          }
-                        />
-                        {list.length === 0 ? (
-                          <div className="text-[11px] text-slate-500">No tasks</div>
-                        ) : (
-                          <div className="grid gap-2">
-                            {list.map((task) => (
-                              <PlanTaskCard
-                                key={task.id}
-                                task={task}
-                                loc={{ level: "week", weekStart: ws, day, id: task.id }}
-                                onMoveToToday={() =>
-                                  movePlanTaskToToday({ level: "week", weekStart: ws, day, id: task.id }, day)
-                                }
-                              />
-                            ))}
+                <div className="w-full">
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+                    {days.map((day) => {
+                      const week = s.plans.weeks[ws];
+                      const list = week?.days?.[day] ?? [];
+                      return (
+                        <div
+                          key={day}
+                          className="rounded-lg border border-slate-900 bg-slate-900/60 p-2 flex min-w-0 flex-col gap-2"
+                        >
+                          <div className="flex items-center justify-between text-xs font-semibold">
+                            <span>{day}</span>
+                            <button
+                              onClick={() =>
+                                addPlanWeekTask(ws, day, {
+                                  title: "Быстрая задача",
+                                  priority: 2,
+                                  estimateMin: null,
+                                  deadlineDate: null,
+                                })
+                              }
+                              className="rounded-md border border-slate-800 bg-slate-950 px-2 py-1 hover:bg-slate-900"
+                            >
+                              +
+                            </button>
                           </div>
-                        )}
-                      </div>
-                    );
-                  })}
+                          <PlanTaskForm
+                            placeholder="Добавить задачу"
+                            onSubmit={({ title, note, priority, estimateMin, deadlineDate }) =>
+                              addPlanWeekTask(ws, day, { title, note, priority, estimateMin, deadlineDate })
+                            }
+                          />
+                          {list.length === 0 ? (
+                            <div className="text-[11px] text-slate-500">Нет задач</div>
+                          ) : (
+                            <div className="grid gap-2">
+                              {list.map((task) => (
+                                <PlanTaskCard
+                                  key={task.id}
+                                  task={task}
+                                  loc={{ level: "week", weekStart: ws, day, id: task.id }}
+                                  onMoveToToday={() =>
+                                    movePlanTaskToToday({ level: "week", weekStart: ws, day, id: task.id }, day)
+                                  }
+                                />
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
                 </div>
               </div>
             );
@@ -515,67 +554,79 @@ function WeekView({ start }: { start: string }) {
   return (
     <div className="grid gap-3">
       <div className="flex items-center justify-between">
-        <div className="text-lg font-semibold">Week of {start}</div>
+        <div className="text-lg font-semibold">Неделя от {start}</div>
         <Link
           to="/today"
           className="rounded-lg border border-emerald-500 bg-emerald-600/10 px-3 py-1 text-sm text-emerald-100 hover:bg-emerald-600/20"
         >
-          Go to Today →
+          В Сегодня →
         </Link>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-7 gap-3">
-        {days.map((day) => {
-          const list = week?.days?.[day] ?? [];
-          return (
-            <div key={day} className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-2">
-              <div className="flex items-center justify-between">
-                <div className="text-sm font-semibold">{day}</div>
-                <button
-                  onClick={() => addPlanWeekTask(start, day, { title: "New task", priority: 2, estimateMin: null })}
-                  className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs hover:bg-slate-800"
-                >
-                  +
-                </button>
-              </div>
-              <PlanTaskForm
-                placeholder="Add task"
-                onSubmit={({ title, note, priority, estimateMin }) =>
-                  addPlanWeekTask(start, day, { title, note, priority, estimateMin })
-                }
-              />
-              {list.length === 0 ? (
-                <div className="text-xs text-slate-500">No tasks</div>
-              ) : (
-                <div className="grid gap-2">
-                  {list.map((task) => (
-                    <PlanTaskCard
-                      key={task.id}
-                      task={task}
-                      loc={{ level: "week", weekStart: start, day, id: task.id }}
-                      onMoveToToday={() =>
-                        movePlanTaskToToday({ level: "week", weekStart: start, day, id: task.id }, day)
-                      }
-                      moveTargets={{ weeks: nearbyWeeks, months }}
-                      onMove={({ day: nextDay, weekStart: targetWeek, month }) => {
-                        if (month) {
-                          movePlanTaskToMonth({ level: "week", weekStart: start, day, id: task.id }, month);
-                          return;
-                        }
-                        if (targetWeek && nextDay) {
-                          movePlanTaskToWeek(
-                            { level: "week", weekStart: start, day, id: task.id },
-                            targetWeek,
-                            nextDay
-                          );
-                        }
-                      }}
-                    />
-                  ))}
+      <div className="w-full">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4 xl:grid-cols-7">
+          {days.map((day) => {
+            const list = week?.days?.[day] ?? [];
+            return (
+              <div
+                key={day}
+                className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-2 min-w-0"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="text-sm font-semibold">{day}</div>
+                  <button
+                    onClick={() =>
+                      addPlanWeekTask(start, day, {
+                        title: "Быстрая задача",
+                        priority: 2,
+                        estimateMin: null,
+                        deadlineDate: null,
+                      })
+                    }
+                    className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs hover:bg-slate-800"
+                  >
+                    +
+                  </button>
                 </div>
-              )}
-            </div>
-          );
-        })}
+                <PlanTaskForm
+                  placeholder="Добавить задачу"
+                  onSubmit={({ title, note, priority, estimateMin, deadlineDate }) =>
+                    addPlanWeekTask(start, day, { title, note, priority, estimateMin, deadlineDate })
+                  }
+                />
+                {list.length === 0 ? (
+                  <div className="text-xs text-slate-500">Нет задач</div>
+                ) : (
+                  <div className="grid gap-2">
+                    {list.map((task) => (
+                      <PlanTaskCard
+                        key={task.id}
+                        task={task}
+                        loc={{ level: "week", weekStart: start, day, id: task.id }}
+                        onMoveToToday={() =>
+                          movePlanTaskToToday({ level: "week", weekStart: start, day, id: task.id }, day)
+                        }
+                        moveTargets={{ weeks: nearbyWeeks, months }}
+                        onMove={({ day: nextDay, weekStart: targetWeek, month }) => {
+                          if (month) {
+                            movePlanTaskToMonth({ level: "week", weekStart: start, day, id: task.id }, month);
+                            return;
+                          }
+                          if (targetWeek && nextDay) {
+                            movePlanTaskToWeek(
+                              { level: "week", weekStart: start, day, id: task.id },
+                              targetWeek,
+                              nextDay
+                            );
+                          }
+                        }}
+                      />
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );
@@ -585,9 +636,9 @@ type PlanTabKey = "year" | "month" | "week";
 
 function SectionTabs({ value, onChange }: { value: PlanTabKey; onChange: (v: PlanTabKey) => void }) {
   const tabOptions: { key: PlanTabKey; label: string }[] = [
-    { key: "year", label: "Year" },
-    { key: "month", label: "Month" },
-    { key: "week", label: "Week" },
+    { key: "year", label: "Год" },
+    { key: "month", label: "Месяц" },
+    { key: "week", label: "Неделя" },
   ];
   return (
     <div className="inline-flex rounded-xl border border-slate-800 bg-slate-950 p-1 text-sm">
@@ -623,8 +674,8 @@ export default function PlansPage() {
     <div className="grid gap-4">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div>
-          <div className="text-xl font-semibold">Plans</div>
-          <div className="text-sm text-slate-400">MSA horizons: Year → Month → Week → Today</div>
+          <div className="text-xl font-semibold">Планы</div>
+          <div className="text-sm text-slate-400">Горизонты: год → месяц → неделя → сегодня</div>
         </div>
         <SectionTabs value={tab} onChange={setTab} />
       </div>
@@ -676,7 +727,7 @@ export default function PlansPage() {
               }}
               className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800"
             >
-              This month
+              Текущий месяц
             </button>
           </div>
           <MonthView year={selectedYear} monthIndex={selectedMonth} />
@@ -690,20 +741,20 @@ export default function PlansPage() {
               onClick={() => setWeekStart((w) => ymdAddDays(w, -7))}
               className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-900"
             >
-              ← Prev week
+              ← Предыдущая неделя
             </button>
             <div className="text-lg font-semibold">{weekStart}</div>
             <button
               onClick={() => setWeekStart((w) => ymdAddDays(w, 7))}
               className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm hover:bg-slate-900"
             >
-              Next week →
+              Следующая неделя →
             </button>
             <button
               onClick={() => setWeekStart(baseWeek)}
               className="rounded-lg border border-slate-800 bg-slate-900 px-3 py-2 text-sm hover:bg-slate-800"
             >
-              This week
+              Текущая неделя
             </button>
           </div>
           <WeekView start={weekStart} />

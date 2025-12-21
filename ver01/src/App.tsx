@@ -35,7 +35,7 @@ export default function App() {
           <div className="text-lg font-semibold">TM Archangel</div>
           <div className="flex flex-wrap gap-2">
             <NavLink to="/today" label="Today" />
-            <NavLink to="/week" label="Plans" />
+            <NavLink to="/week" label="Планы" />
             <NavLink to="/time" label="Time" />
             <NavLink to="/analytics" label="Analytics" />
             <NavLink to="/review" label="Review" />
