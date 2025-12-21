@@ -583,7 +583,7 @@ function loadState(): AppState {
         ? (parsed as any).timeLogs.map(normalizeTimeLog)
         : DEFAULT_STATE.timeLogs,
       reviews: Array.isArray((parsed as any).reviews)
-        ? ((parsed as any).reviews as any)
+        ? ((parsed as any).reviews as any).map(normalizeReview)
         : DEFAULT_STATE.reviews,
       activeTimer: normalizeActiveTimer((parsed as any).activeTimer),
     };
@@ -674,6 +674,22 @@ function normalizeTimeLog(l: any): TimeLog {
     note: String(l.note ?? ""),
     kind,
     sinkId,
+  };
+}
+
+function normalizeReview(r: any): ReviewEntry {
+  const nowTs = now();
+  const weekStart = typeof r?.weekStart === "string" ? r.weekStart : todayYMD();
+
+  return {
+    id: typeof r?.id === "string" ? r.id : uid(),
+    weekStart,
+    wins: typeof r?.wins === "string" ? r.wins : "",
+    lessons: typeof r?.lessons === "string" ? r.lessons : "",
+    focus: typeof r?.focus === "string" ? r.focus : "",
+    next: typeof r?.next === "string" ? r.next : "",
+    createdAt: toFiniteNumber(r?.createdAt) ?? nowTs,
+    updatedAt: toFiniteNumber(r?.updatedAt) ?? nowTs,
   };
 }
 
@@ -953,7 +969,9 @@ export function importBackupJson(jsonText: string) {
     settings: { ...DEFAULT_STATE.settings, ...(parsed.settings ?? {}) },
     tasks: Array.isArray((parsed as any).tasks) ? (parsed as any).tasks.map(normalizeTask) : [],
     timeLogs: Array.isArray((parsed as any).timeLogs) ? (parsed as any).timeLogs.map(normalizeTimeLog) : [],
-    reviews: Array.isArray((parsed as any).reviews) ? (parsed as any).reviews : [],
+    reviews: Array.isArray((parsed as any).reviews)
+      ? (parsed as any).reviews.map(normalizeReview)
+      : [],
     activeTimer: normalizeActiveTimer((parsed as any).activeTimer),
   };
 

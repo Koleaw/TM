@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Link } from "react-router-dom";
 import {
   addPlanMonthTask,
@@ -584,6 +584,10 @@ export default function PlansPage() {
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
   const baseWeek = getWeekStart(today, s.settings.weekStartsOn);
   const [weekStart, setWeekStart] = useState(baseWeek);
+
+  useEffect(() => {
+    setWeekStart(getWeekStart(today, s.settings.weekStartsOn));
+  }, [today, s.settings.weekStartsOn]);
 
   const horizonWeeks = useMemo(
     () => Array.from({ length: 6 }, (_, i) => ymdAddDays(baseWeek, i * 7)),
