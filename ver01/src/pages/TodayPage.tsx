@@ -160,35 +160,77 @@ function ChecklistEditor({ task }: { task: Task }) {
   );
 }
 
-function SubtaskCard({ task }: { task: Task }) {
+function SubtaskRow(props: {
+  task: Task;
+  isActive: boolean;
+  activeExists: boolean;
+  onStartOrSwitch: (taskId: ID) => void;
+  onToggleDone: (taskId: ID) => void;
+  onBeginEdit: (taskId: ID) => void;
+  onDelete: (taskId: ID) => void;
+  editingTaskId: ID | null;
+  editPanel: React.ReactNode;
+}) {
+  const { task, isActive, activeExists, onStartOrSwitch, onToggleDone, onBeginEdit, onDelete, editingTaskId, editPanel } =
+    props;
+
   const [open, setOpen] = useState(false);
 
+  const metaParts: string[] = [];
+  metaParts.push(`приоритет: ${prioLabel(task.priority ?? 2)}`);
+  if (typeof task.estimateMin === "number" && task.estimateMin > 0) metaParts.push(`оценка ${fmtDuration(task.estimateMin)}`);
+  if (task.deadlineAt) metaParts.push(`дедлайн ${fmtCountdown(task.deadlineAt)}`);
+
   return (
-    <div className="rounded-lg border border-slate-800 bg-slate-950 p-3">
+    <div className="rounded-lg border border-slate-800/70 bg-slate-950/60 p-3">
       <div className="flex items-start justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <button
-            className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
-            onClick={() => setOpen((v) => !v)}
-            title={open ? "Свернуть" : "Развернуть"}
-          >
-            {open ? "▾" : "▸"}
-          </button>
-          <input
-            type="checkbox"
-            className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-400"
-            checked={task.status === "done"}
-            onChange={() => toggleDone(task.id)}
-          />
-          <div className={`truncate text-sm ${task.status === "done" ? "text-slate-500 line-through" : "text-slate-100"}`}>
-            {task.title}
+        <div className="min-w-0 space-y-1">
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+              onClick={() => setOpen((v) => !v)}
+              title={open ? "Свернуть детали" : "Детали подзадачи"}
+            >
+              {open ? "▾" : "▸"}
+            </button>
+            <input
+              type="checkbox"
+              className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-400"
+              checked={task.status === "done"}
+              onChange={() => onToggleDone(task.id)}
+            />
+            <div className={`truncate text-sm font-medium ${isActive ? "text-emerald-300" : "text-slate-100"}`}>
+              {task.title}
+            </div>
+            {isActive ? (
+              <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">
+                active
+              </span>
+            ) : null}
           </div>
+          <div className="text-xs text-slate-400">{metaParts.join(" • ") || ""}</div>
         </div>
 
         <div className="flex items-center gap-2">
           <button
-            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
-            onClick={() => deleteTask(task.id)}
+            className="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950"
+            onClick={() => onStartOrSwitch(task.id)}
+            title={activeExists ? "Переключиться" : "Старт"}
+          >
+            {activeExists ? "→" : "Старт"}
+          </button>
+
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+            onClick={() => onBeginEdit(task.id)}
+            title="Редактировать"
+          >
+            ✎
+          </button>
+
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-2 text-xs hover:bg-slate-800"
+            onClick={() => onDelete(task.id)}
             title="Удалить подзадачу"
           >
             🗑
@@ -196,12 +238,44 @@ function SubtaskCard({ task }: { task: Task }) {
         </div>
       </div>
 
-      {open ? <ChecklistEditor task={task} /> : null}
+      {open ? (
+        <div className="mt-3 space-y-3">
+          <ChecklistEditor task={task} />
+          {editingTaskId === task.id ? editPanel : null}
+        </div>
+      ) : editingTaskId === task.id ? (
+        <div className="mt-3">{editPanel}</div>
+      ) : null}
     </div>
   );
 }
 
-function TaskDetails({ task, subtasks, allowSubtasks }: { task: Task; subtasks: Task[]; allowSubtasks: boolean }) {
+function TaskDetails(props: {
+  task: Task;
+  subtasks: Task[];
+  allowSubtasks: boolean;
+  activeTaskId: ID | null;
+  activeExists: boolean;
+  onStartOrSwitch: (taskId: ID) => void;
+  onToggleDone: (taskId: ID) => void;
+  onBeginEdit: (taskId: ID) => void;
+  onDelete: (taskId: ID) => void;
+  editingTaskId: ID | null;
+  editPanel: React.ReactNode;
+}) {
+  const {
+    task,
+    subtasks,
+    allowSubtasks,
+    activeTaskId,
+    activeExists,
+    onStartOrSwitch,
+    onToggleDone,
+    onBeginEdit,
+    onDelete,
+    editingTaskId,
+    editPanel,
+  } = props;
   const [newSubtask, setNewSubtask] = useState("");
 
   function addSubtask() {
@@ -224,14 +298,25 @@ function TaskDetails({ task, subtasks, allowSubtasks }: { task: Task; subtasks: 
       <ChecklistEditor task={task} />
 
       {allowSubtasks ? (
-        <div className="space-y-2 rounded-lg border border-slate-800/70 bg-slate-950/60 p-3">
+        <div className="space-y-3 rounded-lg border border-slate-800/70 bg-slate-950/40 p-3">
           <div className="text-xs font-semibold text-slate-200">Подзадачи</div>
           {subtasks.length === 0 ? (
             <div className="text-xs text-slate-500">Подзадач пока нет</div>
           ) : (
             <div className="space-y-2">
               {subtasks.map((st) => (
-                <SubtaskCard key={st.id} task={st} />
+                <SubtaskRow
+                  key={st.id}
+                  task={st}
+                  isActive={activeTaskId === st.id}
+                  activeExists={activeExists}
+                  onStartOrSwitch={onStartOrSwitch}
+                  onToggleDone={onToggleDone}
+                  onBeginEdit={onBeginEdit}
+                  onDelete={onDelete}
+                  editingTaskId={editingTaskId}
+                  editPanel={editPanel}
+                />
               ))}
             </div>
           )}
@@ -458,6 +543,7 @@ function TaskRow(props: {
   t: Task;
   isActive: boolean;
   activeExists: boolean;
+  activeTaskId: ID | null;
   onStartOrSwitch: (taskId: ID) => void;
   onToggleDone: (taskId: ID) => void;
   onBeginEdit: (taskId: ID) => void;
@@ -466,6 +552,7 @@ function TaskRow(props: {
   yesterday: string;
   tomorrow: string;
   isEditing: boolean;
+  editingTaskId: ID | null;
   editPanel: React.ReactNode;
   subtasks: Task[];
 }) {
@@ -473,6 +560,7 @@ function TaskRow(props: {
     t,
     isActive,
     activeExists,
+    activeTaskId,
     onStartOrSwitch,
     onToggleDone,
     onBeginEdit,
@@ -481,6 +569,7 @@ function TaskRow(props: {
     yesterday,
     tomorrow,
     isEditing,
+    editingTaskId,
     editPanel,
     subtasks,
   } = props;
@@ -569,7 +658,21 @@ function TaskRow(props: {
         </div>
       </div>
 
-      {openDetails ? <TaskDetails task={t} subtasks={subtasks} allowSubtasks={!t.parentId} /> : null}
+      {openDetails ? (
+        <TaskDetails
+          task={t}
+          subtasks={subtasks}
+          allowSubtasks={!t.parentId}
+          activeTaskId={activeTaskId}
+          activeExists={activeExists}
+          onStartOrSwitch={onStartOrSwitch}
+          onToggleDone={onToggleDone}
+          onBeginEdit={onBeginEdit}
+          onDelete={onDelete}
+          editingTaskId={editingTaskId}
+          editPanel={editPanel}
+        />
+      ) : null}
 
       {isEditing ? editPanel : null}
     </div>
@@ -914,6 +1017,9 @@ function BacklogRow(props: {
   t: Task;
   isEditing: boolean;
   editPanel: React.ReactNode;
+  editingTaskId: ID | null;
+  activeTaskId: ID | null;
+  activeExists: boolean;
   onStartOrSwitch: (taskId: ID) => void;
   onBeginEdit: (taskId: ID) => void;
   onToggleDone: (taskId: ID) => void;
@@ -922,14 +1028,17 @@ function BacklogRow(props: {
   subtasks: Task[];
 }) {
   const {
-    t,
-    isEditing,
-    editPanel,
-    onStartOrSwitch,
-    onBeginEdit,
-    onToggleDone,
-    onDelete,
-    onMoveToToday,
+  t,
+  isEditing,
+  editPanel,
+  editingTaskId,
+  activeTaskId,
+  activeExists,
+  onStartOrSwitch,
+  onBeginEdit,
+  onToggleDone,
+  onDelete,
+  onMoveToToday,
     subtasks,
   } = props;
 
@@ -958,9 +1067,9 @@ function BacklogRow(props: {
           <div className="mt-0.5 text-xs text-slate-400">{metaParts.join(" • ")}</div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
-          <button
-            className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
+      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+        <button
+          className="rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-xs hover:bg-slate-800"
             onClick={() => onMoveToToday(t.id)}
             title="Добавить в план на сегодня"
           >
@@ -997,7 +1106,21 @@ function BacklogRow(props: {
         </div>
       </div>
 
-      {openDetails ? <TaskDetails task={t} subtasks={subtasks} allowSubtasks={!t.parentId} /> : null}
+      {openDetails ? (
+        <TaskDetails
+          task={t}
+          subtasks={subtasks}
+          allowSubtasks={!t.parentId}
+          activeTaskId={activeTaskId}
+          activeExists={activeExists}
+          onStartOrSwitch={onStartOrSwitch}
+          onToggleDone={onToggleDone}
+          onBeginEdit={onBeginEdit}
+          onDelete={onDelete}
+          editingTaskId={editingTaskId}
+          editPanel={editPanel}
+        />
+      ) : null}
 
       {isEditing ? editPanel : null}
     </div>
@@ -1559,6 +1682,7 @@ const hardToday = useMemo(
                   t={t}
                   isActive={!!active && active.taskId === t.id}
                   activeExists={!!active}
+                  activeTaskId={active?.taskId ?? null}
                   onStartOrSwitch={startOrSwitchToTask}
                   onToggleDone={(id) => toggleDone(id)}
                   onBeginEdit={(id) => setEditingTaskId(id)}
@@ -1567,6 +1691,7 @@ const hardToday = useMemo(
                   yesterday={yesterday}
                   tomorrow={tomorrow}
                   isEditing={editingTaskId === t.id}
+                  editingTaskId={editingTaskId}
                   editPanel={editingTaskId === t.id ? editPanelNode : null}
                   subtasks={childrenByParentId[t.id] ?? []}
                 />
@@ -1632,6 +1757,7 @@ const hardToday = useMemo(
                   t={t}
                   isActive={!!active && active.taskId === t.id}
                   activeExists={!!active}
+                  activeTaskId={active?.taskId ?? null}
                   onStartOrSwitch={startOrSwitchToTask}
                   onToggleDone={(id) => toggleDone(id)}
                   onBeginEdit={(id) => setEditingTaskId(id)}
@@ -1640,6 +1766,7 @@ const hardToday = useMemo(
                   yesterday={yesterday}
                   tomorrow={tomorrow}
                   isEditing={editingTaskId === t.id}
+                  editingTaskId={editingTaskId}
                   editPanel={editingTaskId === t.id ? editPanelNode : null}
                   subtasks={childrenByParentId[t.id] ?? []}
                 />
@@ -1706,6 +1833,8 @@ const hardToday = useMemo(
                 onMoveToToday={(id) => moveTask(id, today, null)}
                 isEditing={editingTaskId === t.id}
                 onStartOrSwitch={startOrSwitchToTask}
+                activeTaskId={active?.taskId ?? null}
+                activeExists={!!active}
                 onBeginEdit={(id) => setEditingTaskId((prev) => (prev === id ? null : id))}
                 onToggleDone={(id) => toggleDone(id)}
                 onDelete={(id) => {
@@ -1713,6 +1842,7 @@ const hardToday = useMemo(
                   deleteTask(id);
                   if (editingTaskId === id) setEditingTaskId(null);
                 }}
+                editingTaskId={editingTaskId}
                 editPanel={editingTaskId === t.id ? editPanelNode : null}
                 subtasks={childrenByParentId[t.id] ?? []}
               />
