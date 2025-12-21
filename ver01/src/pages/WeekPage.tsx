@@ -85,7 +85,7 @@ function PlanTaskCard({
   }, [selectedWeek]);
 
   return (
-    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-3">
+    <div className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-3 min-w-0">
       <div className="flex flex-col gap-2">
         <div className="flex items-start justify-between gap-3">
           <div className="flex flex-col gap-1 min-w-0">
@@ -239,18 +239,18 @@ function PlanTaskForm({
   const [deadline, setDeadline] = useState("");
 
   return (
-    <div className="grid gap-2">
+    <div className="grid gap-2 min-w-0">
       <input
         value={title}
         onChange={(e) => setTitle(e.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm"
+        className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm min-w-0"
       />
       <textarea
         value={note}
         onChange={(e) => setNote(e.target.value)}
         placeholder="Заметка (опционально)"
-        className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm"
+        className="w-full rounded-lg border border-slate-800 bg-slate-950 px-3 py-2 text-sm min-w-0"
       />
       <div className="grid grid-cols-1 gap-2 md:grid-cols-[auto_auto_auto_1fr] md:items-center">
         <select
@@ -420,10 +420,10 @@ function MonthView({ year, monthIndex }: { year: number; monthIndex: number }) {
 
   return (
     <div className="grid gap-6">
-      <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 grid gap-3">
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          <div className="text-lg font-semibold">Фокус месяца {monthLabel}</div>
-          <div className="text-xs text-slate-400">Месяц → недели → Сегодня</div>
+        <div className="rounded-xl border border-slate-800 bg-slate-950 p-4 grid gap-3 min-w-0">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <div className="text-lg font-semibold">Фокус месяца {monthLabel}</div>
+            <div className="text-xs text-slate-400">Месяц → недели → Сегодня</div>
         </div>
         <PlanTaskForm
           placeholder={`Добавить задачу в месяц (${monthLabel})`}
@@ -465,10 +465,10 @@ function MonthView({ year, monthIndex }: { year: number; monthIndex: number }) {
           {weekStarts.map((ws) => {
             const days = weekDays(ws);
             return (
-              <div key={ws} className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-2">
-                <div className="flex items-center justify-between">
-                  <div className="text-sm font-semibold">Неделя от {ws}</div>
-                  <button
+            <div key={ws} className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-2 min-w-0">
+              <div className="flex items-center justify-between">
+                <div className="text-sm font-semibold">Неделя от {ws}</div>
+                <button
                     onClick={() =>
                       addPlanWeekTask(ws, days[0], {
                         title: "Быстрая задача",
@@ -483,12 +483,15 @@ function MonthView({ year, monthIndex }: { year: number; monthIndex: number }) {
                   </button>
                 </div>
                 <div className="overflow-x-auto pb-1">
-                  <div className="grid min-w-[720px] grid-cols-[repeat(7,minmax(140px,1fr))] gap-2">
+                  <div className="grid grid-cols-7 gap-2 min-w-[980px] xl:min-w-0">
                     {days.map((day) => {
                       const week = s.plans.weeks[ws];
                       const list = week?.days?.[day] ?? [];
                       return (
-                        <div key={day} className="rounded-lg border border-slate-900 bg-slate-900/60 p-2 flex flex-col gap-2">
+                        <div
+                          key={day}
+                          className="rounded-lg border border-slate-900 bg-slate-900/60 p-2 flex flex-col gap-2 min-w-[260px] xl:min-w-0"
+                        >
                           <div className="flex items-center justify-between text-xs font-semibold">
                             <span>{day}</span>
                             <button
@@ -560,11 +563,14 @@ function WeekView({ start }: { start: string }) {
         </Link>
       </div>
       <div className="overflow-x-auto pb-1">
-        <div className="grid min-w-[720px] grid-cols-[repeat(7,minmax(140px,1fr))] gap-3">
+        <div className="grid grid-cols-7 gap-3 min-w-[980px] xl:min-w-0">
           {days.map((day) => {
             const list = week?.days?.[day] ?? [];
             return (
-              <div key={day} className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-2">
+              <div
+                key={day}
+                className="rounded-xl border border-slate-800 bg-slate-950 p-3 grid gap-2 min-w-[260px] xl:min-w-0"
+              >
                 <div className="flex items-center justify-between">
                   <div className="text-sm font-semibold">{day}</div>
                   <button
