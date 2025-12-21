@@ -22,6 +22,14 @@ import {
 // helpers
 const isFiniteNumber = (v: unknown): v is number => typeof v === "number" && isFinite(v as number);
 
+function localId(): string {
+  // lightweight uid for checklist items / subtasks
+  // @ts-ignore
+  return (
+    globalThis.crypto?.randomUUID?.() ?? `id_${Math.random().toString(16).slice(2)}_${Date.now()}`
+  );
+}
+
 function pad2(n: number) {
   return String(n).padStart(2, "0");
 }
@@ -69,6 +77,186 @@ function prioBarClass(p: number) {
   if (p === 1) return "bg-rose-500/80";
   if (p === 2) return "bg-amber-400/80";
   return "bg-emerald-500/70";
+}
+
+
+function ChecklistEditor({ task }: { task: Task }) {
+  const checklist = task.checklist ?? [];
+  const [newItem, setNewItem] = useState("");
+
+  function addItem() {
+    const text = newItem.trim();
+    if (!text) return;
+    const updated = [...checklist, { id: localId(), text, done: false }];
+    updateTask(task.id, { checklist: updated });
+    setNewItem("");
+  }
+
+  function toggleItem(id: ID) {
+    const updated = checklist.map((it) => (it.id === id ? { ...it, done: !it.done } : it));
+    updateTask(task.id, { checklist: updated });
+  }
+
+  function editItem(id: ID, text: string) {
+    const updated = checklist.map((it) => (it.id === id ? { ...it, text } : it));
+    updateTask(task.id, { checklist: updated });
+  }
+
+  function deleteItem(id: ID) {
+    const updated = checklist.filter((it) => it.id !== id);
+    updateTask(task.id, { checklist: updated });
+  }
+
+  return (
+    <div className="space-y-2 rounded-lg border border-slate-800/70 bg-slate-900/60 p-3">
+      <div className="text-xs font-semibold text-slate-200">Чеклист</div>
+      {checklist.length === 0 ? (
+        <div className="text-xs text-slate-500">Пока пусто</div>
+      ) : (
+        <div className="space-y-2">
+          {checklist.map((it) => (
+            <div key={it.id} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-400"
+                checked={!!it.done}
+                onChange={() => toggleItem(it.id)}
+              />
+              <input
+                className="h-9 w-full rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm text-slate-100 outline-none focus:border-slate-600"
+                value={it.text}
+                onChange={(e) => editItem(it.id, e.target.value)}
+              />
+              <button
+                className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                onClick={() => deleteItem(it.id)}
+                title="Удалить пункт"
+              >
+                ✕
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="flex flex-wrap items-center gap-2">
+        <input
+          className="h-9 min-w-[220px] flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm text-slate-100 outline-none focus:border-slate-600"
+          placeholder="Новый пункт чеклиста"
+          value={newItem}
+          onChange={(e) => setNewItem(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") addItem();
+          }}
+        />
+        <button
+          className="h-9 rounded-lg border border-slate-800 bg-slate-950 px-3 text-xs font-semibold text-slate-100 hover:bg-slate-800"
+          onClick={addItem}
+        >
+          Добавить
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function SubtaskCard({ task }: { task: Task }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-lg border border-slate-800 bg-slate-950 p-3">
+      <div className="flex items-start justify-between gap-2">
+        <div className="flex min-w-0 items-center gap-2">
+          <button
+            className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+            onClick={() => setOpen((v) => !v)}
+            title={open ? "Свернуть" : "Развернуть"}
+          >
+            {open ? "▾" : "▸"}
+          </button>
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-slate-700 bg-slate-950 text-emerald-400"
+            checked={task.status === "done"}
+            onChange={() => toggleDone(task.id)}
+          />
+          <div className={`truncate text-sm ${task.status === "done" ? "text-slate-500 line-through" : "text-slate-100"}`}>
+            {task.title}
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <button
+            className="rounded-lg border border-slate-800 bg-slate-950 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+            onClick={() => deleteTask(task.id)}
+            title="Удалить подзадачу"
+          >
+            🗑
+          </button>
+        </div>
+      </div>
+
+      {open ? <ChecklistEditor task={task} /> : null}
+    </div>
+  );
+}
+
+function TaskDetails({ task, subtasks, allowSubtasks }: { task: Task; subtasks: Task[]; allowSubtasks: boolean }) {
+  const [newSubtask, setNewSubtask] = useState("");
+
+  function addSubtask() {
+    if (!allowSubtasks) return;
+    const title = newSubtask.trim();
+    if (!title) return;
+    createTask(title, {
+      parentId: task.id,
+      plannedDate: task.plannedDate ?? null,
+      plannedStart: null,
+      priority: task.priority,
+      deadlineAt: task.deadlineAt,
+      estimateMin: null,
+    });
+    setNewSubtask("");
+  }
+
+  return (
+    <div className="mt-3 space-y-3 rounded-xl border border-slate-800 bg-slate-900/70 p-3">
+      <ChecklistEditor task={task} />
+
+      {allowSubtasks ? (
+        <div className="space-y-2 rounded-lg border border-slate-800/70 bg-slate-950/60 p-3">
+          <div className="text-xs font-semibold text-slate-200">Подзадачи</div>
+          {subtasks.length === 0 ? (
+            <div className="text-xs text-slate-500">Подзадач пока нет</div>
+          ) : (
+            <div className="space-y-2">
+              {subtasks.map((st) => (
+                <SubtaskCard key={st.id} task={st} />
+              ))}
+            </div>
+          )}
+
+          <div className="flex flex-wrap items-center gap-2 pt-1">
+            <input
+              className="h-9 min-w-[220px] flex-1 rounded-lg border border-slate-800 bg-slate-950 px-3 text-sm text-slate-100 outline-none focus:border-slate-600"
+              placeholder="Новая подзадача"
+              value={newSubtask}
+              onChange={(e) => setNewSubtask(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") addSubtask();
+              }}
+            />
+            <button
+              className="h-9 rounded-lg border border-slate-800 bg-slate-950 px-3 text-xs font-semibold text-slate-100 hover:bg-slate-800"
+              onClick={addSubtask}
+            >
+              Добавить подзадачу
+            </button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 
@@ -279,6 +467,7 @@ function TaskRow(props: {
   tomorrow: string;
   isEditing: boolean;
   editPanel: React.ReactNode;
+  subtasks: Task[];
 }) {
   const {
     t,
@@ -293,7 +482,10 @@ function TaskRow(props: {
     tomorrow,
     isEditing,
     editPanel,
+    subtasks,
   } = props;
+
+  const [openDetails, setOpenDetails] = useState(false);
 
   const metaParts: string[] = [];
   metaParts.push(`приоритет: ${prioLabel(t.priority ?? 2)}`);
@@ -307,6 +499,13 @@ function TaskRow(props: {
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="flex items-center gap-2">
+            <button
+              className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+              onClick={() => setOpenDetails((v) => !v)}
+              title={openDetails ? "Свернуть детали" : "Детали задачи"}
+            >
+              {openDetails ? "▾" : "▸"}
+            </button>
             <div className={`truncate text-sm font-medium ${isActive ? "text-emerald-300" : "text-slate-100"}`}>
               {t.title}
             </div>
@@ -370,6 +569,8 @@ function TaskRow(props: {
         </div>
       </div>
 
+      {openDetails ? <TaskDetails task={t} subtasks={subtasks} allowSubtasks={!t.parentId} /> : null}
+
       {isEditing ? editPanel : null}
     </div>
   );
@@ -403,6 +604,7 @@ function DeadlineRow(props: {
   const [open, setOpen] = useState(false);
   const [newSteakTitle, setNewSteakTitle] = useState("");
   const [newSteakEstimate, setNewSteakEstimate] = useState("0");
+  const [childDetailsOpen, setChildDetailsOpen] = useState<Record<string, boolean>>({});
 
   const dueAt = isFiniteNumber(t.deadlineAt) ? t.deadlineAt : null;
 
@@ -427,7 +629,7 @@ function DeadlineRow(props: {
     if (!title) return;
 
     createTask(title, {
-      parentId: t.id as any,
+      parentId: t.id,
       plannedDate: plannedToday ? today : null,
       plannedStart: null,
       estimateMin: parseEstimate(newSteakEstimate) ?? 0,
@@ -443,7 +645,7 @@ function DeadlineRow(props: {
   function addOneShotSteakToday() {
     // Для маленьких дедлайнов: один бифштекс на сегодня.
     createTask(t.title, {
-      parentId: t.id as any,
+      parentId: t.id,
       plannedDate: today,
       plannedStart: null,
       estimateMin: t.estimateMin ?? 0,
@@ -575,6 +777,8 @@ function DeadlineRow(props: {
             </button>
           </div>
 
+          <ChecklistEditor task={t} />
+
           {children.length === 0 ? (
             <div className="text-sm text-slate-500">Пока нет бифштексов</div>
           ) : (
@@ -595,11 +799,22 @@ function DeadlineRow(props: {
                   />
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="truncate text-sm font-medium text-slate-100">
-                        {c.title}
-                        {inToday ? (
-                          <span className="ml-2 text-xs text-emerald-300">• в плане</span>
-                        ) : null}
+                      <div className="flex items-center gap-2">
+                        <button
+                          className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+                          onClick={() =>
+                            setChildDetailsOpen((prev) => ({ ...prev, [c.id]: !prev[c.id] }))
+                          }
+                          title={childDetailsOpen[c.id] ? "Свернуть детали" : "Детали подзадачи"}
+                        >
+                          {childDetailsOpen[c.id] ? "▾" : "▸"}
+                        </button>
+                        <div className="truncate text-sm font-medium text-slate-100">
+                          {c.title}
+                          {inToday ? (
+                            <span className="ml-2 text-xs text-emerald-300">• в плане</span>
+                          ) : null}
+                        </div>
                       </div>
                       <div className="mt-0.5 text-xs text-slate-400">
                         {`приоритет: ${prioLabel(c.priority)}`}
@@ -676,7 +891,12 @@ function DeadlineRow(props: {
                       </button>
                     </div>
                   </div>
-                {editingTaskId === c.id ? editPanelNode : null}
+                  {childDetailsOpen[c.id] ? (
+                    <div className="mt-2">
+                      <ChecklistEditor task={c} />
+                    </div>
+                  ) : null}
+                  {editingTaskId === c.id ? editPanelNode : null}
                 </div>
               );
             })
@@ -699,6 +919,7 @@ function BacklogRow(props: {
   onToggleDone: (taskId: ID) => void;
   onDelete: (taskId: ID) => void;
   onMoveToToday: (taskId: ID) => void;
+  subtasks: Task[];
 }) {
   const {
     t,
@@ -709,7 +930,10 @@ function BacklogRow(props: {
     onToggleDone,
     onDelete,
     onMoveToToday,
+    subtasks,
   } = props;
+
+  const [openDetails, setOpenDetails] = useState(false);
 
   const metaParts: string[] = [];
   metaParts.push(`приоритет: ${prioLabel(t.priority ?? 2)}`);
@@ -721,7 +945,16 @@ function BacklogRow(props: {
       <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${prioBarClass(t.priority)}`} />
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <div className="truncate text-sm font-medium text-slate-100">{t.title}</div>
+          <div className="flex items-center gap-2">
+            <button
+              className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
+              onClick={() => setOpenDetails((v) => !v)}
+              title={openDetails ? "Свернуть детали" : "Детали задачи"}
+            >
+              {openDetails ? "▾" : "▸"}
+            </button>
+            <div className="truncate text-sm font-medium text-slate-100">{t.title}</div>
+          </div>
           <div className="mt-0.5 text-xs text-slate-400">{metaParts.join(" • ")}</div>
         </div>
 
@@ -763,6 +996,8 @@ function BacklogRow(props: {
           </button>
         </div>
       </div>
+
+      {openDetails ? <TaskDetails task={t} subtasks={subtasks} allowSubtasks={!t.parentId} /> : null}
 
       {isEditing ? editPanel : null}
     </div>
@@ -1033,8 +1268,14 @@ export default function TodayPage() {
   ) : null;
 
   // ---------------- Data slices
-  const tasksToday = useMemo(() => s.tasks.filter((t) => t.plannedDate === today && t.status !== "done"), [s.tasks, today]);
-  const doneToday = useMemo(() => s.tasks.filter((t) => t.plannedDate === today && t.status === "done"), [s.tasks, today]);
+  const tasksToday = useMemo(
+    () => s.tasks.filter((t) => t.parentId == null && t.plannedDate === today && t.status !== "done"),
+    [s.tasks, today]
+  );
+  const doneToday = useMemo(
+    () => s.tasks.filter((t) => t.parentId == null && t.plannedDate === today && t.status === "done"),
+    [s.tasks, today]
+  );
 
   const deadlines = useMemo(
     () =>
@@ -1043,7 +1284,7 @@ export default function TodayPage() {
           (t) =>
             t.status !== "done" &&
             isFiniteNumber(t.deadlineAt) &&
-            (t as any).parentId == null &&
+            t.parentId == null &&
             t.plannedDate == null
         )
         .sort((a, b) => (a.deadlineAt ?? 0) - (b.deadlineAt ?? 0)),
@@ -1053,7 +1294,7 @@ export default function TodayPage() {
   const childrenByParentId = useMemo(() => {
     const m: Record<string, Task[]> = {};
     for (const t of s.tasks) {
-      const pid = (t as any).parentId;
+      const pid = t.parentId;
       if (!pid) continue;
       const key = String(pid);
       if (!m[key]) m[key] = [];
@@ -1086,7 +1327,7 @@ export default function TodayPage() {
             t.status !== "done" &&
             t.plannedDate == null &&
             t.deadlineAt == null &&
-            (t as any).parentId == null
+            t.parentId == null
         )
         .sort((a, b) => (a.priority ?? 2) - (b.priority ?? 2) || b.updatedAt - a.updatedAt),
     [s.tasks]
@@ -1327,6 +1568,7 @@ const hardToday = useMemo(
                   tomorrow={tomorrow}
                   isEditing={editingTaskId === t.id}
                   editPanel={editingTaskId === t.id ? editPanelNode : null}
+                  subtasks={childrenByParentId[t.id] ?? []}
                 />
               ))
             )}
@@ -1399,6 +1641,7 @@ const hardToday = useMemo(
                   tomorrow={tomorrow}
                   isEditing={editingTaskId === t.id}
                   editPanel={editingTaskId === t.id ? editPanelNode : null}
+                  subtasks={childrenByParentId[t.id] ?? []}
                 />
               ))
             )}
@@ -1471,6 +1714,7 @@ const hardToday = useMemo(
                   if (editingTaskId === id) setEditingTaskId(null);
                 }}
                 editPanel={editingTaskId === t.id ? editPanelNode : null}
+                subtasks={childrenByParentId[t.id] ?? []}
               />
             ))
           )}
