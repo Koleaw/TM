@@ -154,7 +154,6 @@ function TaskNode({
         <button
           className="text-slate-400"
           onClick={() => setExpanded((v) => !v)}
-          disabled={children.length === 0 && checklist.length === 0}
           title={expanded ? "Свернуть" : "Раскрыть"}
         >
           {expanded ? "▾" : "▸"}
