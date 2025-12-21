@@ -19,6 +19,8 @@ export type ID = string;
 
 export type TaskStatus = "todo" | "done";
 
+export type ChecklistItem = { id: ID; text: string; done: boolean };
+
 export type Task = {
   id: ID;
   title: string;
@@ -36,6 +38,10 @@ export type Task = {
 
   // дедлайн (если есть). epoch ms
   deadlineAt: number | null;
+
+  // чеклисты и подзадачи
+  checklist: ChecklistItem[];
+  parentId: ID | null;
 
   createdAt: number;
   updatedAt: number;
@@ -635,6 +641,14 @@ export function useAppState(): AppState {
 
 // ---------------- Normalizers ----------------
 
+function normalizeChecklistItem(it: any): ChecklistItem {
+  return {
+    id: typeof it?.id === "string" ? it.id : uid(),
+    text: typeof it?.text === "string" ? it.text : "",
+    done: it?.done === true,
+  };
+}
+
 function normalizeTask(t: any): Task {
   return {
     id: String(t.id ?? uid()),
@@ -647,6 +661,10 @@ function normalizeTask(t: any): Task {
     estimateMin: toFiniteNumber(t.estimateMin),
     priority: (t.priority === 1 || t.priority === 2 || t.priority === 3) ? t.priority : 2,
     deadlineAt: toFiniteNumber(t.deadlineAt),
+    checklist: Array.isArray((t as any).checklist)
+      ? (t as any).checklist.map(normalizeChecklistItem)
+      : [],
+    parentId: (t as any).parentId ? String((t as any).parentId) : null,
     createdAt: toFiniteNumber(t.createdAt) ?? now(),
     updatedAt: toFiniteNumber(t.updatedAt) ?? now(),
   };
@@ -710,6 +728,8 @@ export function createTask(
     estimateMin: null,
     priority: 2,
     deadlineAt: null,
+    checklist: [],
+    parentId: null,
     createdAt: now(),
     updatedAt: now(),
     ...(opts ?? {}),
