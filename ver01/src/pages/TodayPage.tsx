@@ -162,8 +162,11 @@ function ChecklistEditor({ task }: { task: Task }) {
 
 function SubtaskRow(props: {
   task: Task;
+  subtasks: Task[];
+  childrenByParentId: Record<string, Task[]>;
   isActive: boolean;
   activeExists: boolean;
+  activeTaskId: ID | null;
   onStartOrSwitch: (taskId: ID) => void;
   onToggleDone: (taskId: ID) => void;
   onBeginEdit: (taskId: ID) => void;
@@ -171,8 +174,20 @@ function SubtaskRow(props: {
   editingTaskId: ID | null;
   editPanel: React.ReactNode;
 }) {
-  const { task, isActive, activeExists, onStartOrSwitch, onToggleDone, onBeginEdit, onDelete, editingTaskId, editPanel } =
-    props;
+  const {
+    task,
+    subtasks,
+    childrenByParentId,
+    isActive,
+    activeExists,
+    activeTaskId,
+    onStartOrSwitch,
+    onToggleDone,
+    onBeginEdit,
+    onDelete,
+    editingTaskId,
+    editPanel,
+  } = props;
 
   const [open, setOpen] = useState(false);
 
@@ -239,9 +254,21 @@ function SubtaskRow(props: {
       </div>
 
       {open ? (
-        <div className="mt-3 space-y-3">
-          <ChecklistEditor task={task} />
-          {editingTaskId === task.id ? editPanel : null}
+        <div className="mt-3">
+          <TaskDetails
+            task={task}
+            subtasks={subtasks}
+            childrenByParentId={childrenByParentId}
+            allowSubtasks
+            activeTaskId={activeTaskId}
+            activeExists={activeExists}
+            onStartOrSwitch={onStartOrSwitch}
+            onToggleDone={onToggleDone}
+            onBeginEdit={onBeginEdit}
+            onDelete={onDelete}
+            editingTaskId={editingTaskId}
+            editPanel={editPanel}
+          />
         </div>
       ) : editingTaskId === task.id ? (
         <div className="mt-3">{editPanel}</div>
@@ -253,6 +280,7 @@ function SubtaskRow(props: {
 function TaskDetails(props: {
   task: Task;
   subtasks: Task[];
+  childrenByParentId: Record<string, Task[]>;
   allowSubtasks: boolean;
   activeTaskId: ID | null;
   activeExists: boolean;
@@ -266,6 +294,7 @@ function TaskDetails(props: {
   const {
     task,
     subtasks,
+    childrenByParentId,
     allowSubtasks,
     activeTaskId,
     activeExists,
@@ -308,8 +337,11 @@ function TaskDetails(props: {
                 <SubtaskRow
                   key={st.id}
                   task={st}
+                  subtasks={childrenByParentId[st.id] ?? []}
+                  childrenByParentId={childrenByParentId}
                   isActive={activeTaskId === st.id}
                   activeExists={activeExists}
+                  activeTaskId={activeTaskId}
                   onStartOrSwitch={onStartOrSwitch}
                   onToggleDone={onToggleDone}
                   onBeginEdit={onBeginEdit}
@@ -555,6 +587,7 @@ function TaskRow(props: {
   editingTaskId: ID | null;
   editPanel: React.ReactNode;
   subtasks: Task[];
+  childrenByParentId: Record<string, Task[]>;
 }) {
   const {
     t,
@@ -572,6 +605,7 @@ function TaskRow(props: {
     editingTaskId,
     editPanel,
     subtasks,
+    childrenByParentId,
   } = props;
 
   const [openDetails, setOpenDetails] = useState(false);
@@ -662,6 +696,7 @@ function TaskRow(props: {
         <TaskDetails
           task={t}
           subtasks={subtasks}
+          childrenByParentId={childrenByParentId}
           allowSubtasks={!t.parentId}
           activeTaskId={activeTaskId}
           activeExists={activeExists}
@@ -1018,6 +1053,7 @@ function BacklogRow(props: {
   isEditing: boolean;
   editPanel: React.ReactNode;
   editingTaskId: ID | null;
+  childrenByParentId: Record<string, Task[]>;
   activeTaskId: ID | null;
   activeExists: boolean;
   onStartOrSwitch: (taskId: ID) => void;
@@ -1028,13 +1064,14 @@ function BacklogRow(props: {
   subtasks: Task[];
 }) {
   const {
-  t,
-  isEditing,
-  editPanel,
-  editingTaskId,
-  activeTaskId,
-  activeExists,
-  onStartOrSwitch,
+    t,
+    isEditing,
+    editPanel,
+    editingTaskId,
+    childrenByParentId,
+    activeTaskId,
+    activeExists,
+    onStartOrSwitch,
   onBeginEdit,
   onToggleDone,
   onDelete,
@@ -1110,6 +1147,7 @@ function BacklogRow(props: {
         <TaskDetails
           task={t}
           subtasks={subtasks}
+          childrenByParentId={childrenByParentId}
           allowSubtasks={!t.parentId}
           activeTaskId={activeTaskId}
           activeExists={activeExists}
@@ -1686,17 +1724,18 @@ const hardToday = useMemo(
                   onStartOrSwitch={startOrSwitchToTask}
                   onToggleDone={(id) => toggleDone(id)}
                   onBeginEdit={(id) => setEditingTaskId(id)}
-                  onDelete={(id) => deleteTask(id)}
-                  onMove={(id, pd, ps = null) => moveTask(id, pd, ps)}
-                  yesterday={yesterday}
-                  tomorrow={tomorrow}
-                  isEditing={editingTaskId === t.id}
-                  editingTaskId={editingTaskId}
-                  editPanel={editingTaskId === t.id ? editPanelNode : null}
-                  subtasks={childrenByParentId[t.id] ?? []}
-                />
-              ))
-            )}
+                    onDelete={(id) => deleteTask(id)}
+                    onMove={(id, pd, ps = null) => moveTask(id, pd, ps)}
+                    yesterday={yesterday}
+                    tomorrow={tomorrow}
+                    isEditing={editingTaskId === t.id}
+                    editingTaskId={editingTaskId}
+                    editPanel={editPanelNode}
+                    subtasks={childrenByParentId[t.id] ?? []}
+                    childrenByParentId={childrenByParentId}
+                  />
+                ))
+              )}
           </div>
         </div>
 
@@ -1761,17 +1800,18 @@ const hardToday = useMemo(
                   onStartOrSwitch={startOrSwitchToTask}
                   onToggleDone={(id) => toggleDone(id)}
                   onBeginEdit={(id) => setEditingTaskId(id)}
-                  onDelete={(id) => deleteTask(id)}
-                  onMove={(id, pd, ps = null) => moveTask(id, pd, ps)}
-                  yesterday={yesterday}
-                  tomorrow={tomorrow}
-                  isEditing={editingTaskId === t.id}
-                  editingTaskId={editingTaskId}
-                  editPanel={editingTaskId === t.id ? editPanelNode : null}
-                  subtasks={childrenByParentId[t.id] ?? []}
-                />
-              ))
-            )}
+                    onDelete={(id) => deleteTask(id)}
+                    onMove={(id, pd, ps = null) => moveTask(id, pd, ps)}
+                    yesterday={yesterday}
+                    tomorrow={tomorrow}
+                    isEditing={editingTaskId === t.id}
+                    editingTaskId={editingTaskId}
+                    editPanel={editPanelNode}
+                    subtasks={childrenByParentId[t.id] ?? []}
+                    childrenByParentId={childrenByParentId}
+                  />
+                ))
+              )}
           </div>
         </div>
       </div>
@@ -1843,7 +1883,8 @@ const hardToday = useMemo(
                   if (editingTaskId === id) setEditingTaskId(null);
                 }}
                 editingTaskId={editingTaskId}
-                editPanel={editingTaskId === t.id ? editPanelNode : null}
+                editPanel={editPanelNode}
+                childrenByParentId={childrenByParentId}
                 subtasks={childrenByParentId[t.id] ?? []}
               />
             ))
