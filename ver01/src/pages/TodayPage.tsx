@@ -198,9 +198,9 @@ function SubtaskRow(props: {
 
   return (
     <div className="rounded-lg border border-slate-800/70 bg-slate-950/60 p-3">
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0 space-y-1">
-          <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
               onClick={() => setOpen((v) => !v)}
@@ -214,8 +214,8 @@ function SubtaskRow(props: {
               checked={task.status === "done"}
               onChange={() => onToggleDone(task.id)}
             />
-            <div className={`truncate text-sm font-medium ${isActive ? "text-emerald-300" : "text-slate-100"}`}>
-              {task.title}
+            <div className={`min-w-0 flex-1 break-words text-sm font-medium ${isActive ? "text-emerald-300" : "text-slate-100"}`}>
+              <span className="break-words whitespace-normal">{task.title}</span>
             </div>
             {isActive ? (
               <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">
@@ -226,7 +226,7 @@ function SubtaskRow(props: {
           <div className="text-xs text-slate-400">{metaParts.join(" • ") || ""}</div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           <button
             className="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950"
             onClick={() => onStartOrSwitch(task.id)}
@@ -619,9 +619,9 @@ function TaskRow(props: {
   return (
     <div className="relative rounded-xl border border-slate-800 bg-slate-950 p-3 pl-4">
       <div className={`absolute left-0 top-0 bottom-0 w-1 rounded-l-xl ${prioBarClass(t.priority)}`} />
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-2">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0 flex-1">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-xs text-slate-200 hover:bg-slate-800"
               onClick={() => setOpenDetails((v) => !v)}
@@ -629,8 +629,8 @@ function TaskRow(props: {
             >
               {openDetails ? "▾" : "▸"}
             </button>
-            <div className={`truncate text-sm font-medium ${isActive ? "text-emerald-300" : "text-slate-100"}`}>
-              {t.title}
+            <div className={`min-w-0 flex-1 break-words text-sm font-medium ${isActive ? "text-emerald-300" : "text-slate-100"}`}>
+              <span className="break-words whitespace-normal">{t.title}</span>
             </div>
             {isActive ? (
               <span className="rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-200">
@@ -641,7 +641,7 @@ function TaskRow(props: {
           <div className="mt-0.5 text-xs text-slate-400">{metaParts.join(" • ")}</div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
           <button
             className="rounded-lg bg-emerald-400 px-3 py-2 text-sm font-semibold text-slate-950"
             onClick={() => onStartOrSwitch(t.id)}
