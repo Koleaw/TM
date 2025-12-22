@@ -2,12 +2,16 @@ import { useEffect, useMemo, useState } from "react";
 import {
   ChecklistItem,
   Task,
+  createProject as createProjectFn,
   createTask,
+  deleteProject,
   deleteTask,
   moveTask,
   startTimer,
   todayYMD,
+  ymdAddDays,
   toggleDone,
+  updateProject,
   updateTask,
   useAppState,
 } from "../data/db";
@@ -131,7 +135,7 @@ function TaskNode({
   childrenMap: Record<string, Task[]>;
   projectId: string;
 }) {
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(true);
   const [subTitle, setSubTitle] = useState("");
   const children = childrenMap[task.id] ?? [];
 
@@ -151,7 +155,6 @@ function TaskNode({
         <button
           className="text-slate-400"
           onClick={() => setExpanded((v) => !v)}
-          disabled={children.length === 0 && checklist.length === 0}
           title={expanded ? "Свернуть" : "Раскрыть"}
         >
           {expanded ? "▾" : "▸"}
@@ -165,6 +168,8 @@ function TaskNode({
         <input
           className="flex-1 rounded-md bg-slate-800 px-2 py-1 text-sm text-slate-100 outline-none"
           value={task.title}
+          autoFocus={task.title.trim() === ""}
+          placeholder="Название задачи…"
           onChange={(e) => updateTask(task.id, { title: e.target.value })}
         />
         <span
@@ -179,6 +184,14 @@ function TaskNode({
         >
           {priorityLabel(task.priority)}
         </span>
+        {task.plannedDate ? (
+          <span className="text-xs text-slate-300">
+            Запланировано на {task.plannedDate}
+            {task.plannedStart ? ` • ${task.plannedStart}` : ""}
+          </span>
+        ) : (
+          <span className="text-xs text-slate-500">Не запланировано</span>
+        )}
         {task.deadlineAt && (
           <span className="text-xs text-slate-300">{formatDeadline(task.deadlineAt)}</span>
         )}
@@ -225,6 +238,32 @@ function TaskNode({
               </select>
             </div>
             <div className="space-y-1">
+              <label className="text-xs text-slate-400">План (дата)</label>
+              <input
+                type="date"
+                className="w-full rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-sm text-slate-100"
+                value={task.plannedDate ?? ""}
+                onChange={(e) =>
+                  updateTask(task.id, {
+                    plannedDate: e.target.value || null,
+                    plannedStart: e.target.value ? task.plannedStart : null,
+                  })
+                }
+              />
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs text-slate-400">Старт (для жёстких задач)</label>
+              <input
+                type="time"
+                className="w-full rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-sm text-slate-100"
+                value={task.plannedStart ?? ""}
+                disabled={!task.plannedDate}
+                onChange={(e) =>
+                  updateTask(task.id, { plannedStart: e.target.value || null })
+                }
+              />
+            </div>
+            <div className="space-y-1">
               <label className="text-xs text-slate-400">Дедлайн</label>
               <input
                 type="datetime-local"
@@ -247,6 +286,28 @@ function TaskNode({
                 }
               />
             </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs text-slate-300">
+            <span className="text-slate-400">Быстро запланировать:</span>
+            <button
+              className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-[11px] hover:border-emerald-600 hover:text-emerald-100"
+              onClick={() => updateTask(task.id, { plannedDate: todayYMD(), plannedStart: null })}
+            >
+              Сегодня
+            </button>
+            <button
+              className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-[11px] hover:border-emerald-600 hover:text-emerald-100"
+              onClick={() => updateTask(task.id, { plannedDate: ymdAddDays(todayYMD(), 1), plannedStart: null })}
+            >
+              Завтра
+            </button>
+            <button
+              className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-[11px] hover:border-amber-600 hover:text-amber-100"
+              onClick={() => updateTask(task.id, { plannedDate: null, plannedStart: null })}
+            >
+              Снять план
+            </button>
           </div>
 
           <div className="space-y-1">
@@ -309,7 +370,7 @@ function TaskNode({
 export default function ProjectsPage() {
   const { tasks } = useAppState();
   const projects = useMemo(
-    () => tasks.filter((t) => t.parentId === null && t.projectId === null),
+    () => tasks.filter((t) => t.isProject),
     [tasks]
   );
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
@@ -322,13 +383,13 @@ export default function ProjectsPage() {
   }, [projects, selectedProjectId]);
 
   function createProject() {
-    const id = createTask("Новый проект");
+    const id = createProjectFn("Новый проект");
     setSelectedProjectId(id);
   }
 
-  const currentProject = tasks.find((t) => t.id === selectedProjectId) ?? null;
+  const currentProject = tasks.find((t) => t.id === selectedProjectId && t.isProject) ?? null;
   const projectTasks = useMemo(
-    () => tasks.filter((t) => t.projectId === selectedProjectId),
+    () => tasks.filter((t) => !t.isProject && t.projectId === selectedProjectId),
     [tasks, selectedProjectId]
   );
   const childrenMap = useMemo(() => {
@@ -401,7 +462,7 @@ export default function ProjectsPage() {
                 <input
                   className="flex-1 rounded-md bg-slate-800 px-3 py-2 text-lg font-semibold text-slate-100"
                   value={currentProject.title}
-                  onChange={(e) => updateTask(currentProject.id, { title: e.target.value })}
+                  onChange={(e) => updateProject(currentProject.id, { title: e.target.value })}
                 />
                 <div className="flex flex-wrap items-center gap-3">
                   <div className="text-sm text-slate-300">
@@ -414,10 +475,19 @@ export default function ProjectsPage() {
                       className="rounded-md border border-slate-800 bg-slate-900 px-2 py-1 text-sm text-slate-100"
                       value={toInputValue(currentProject.deadlineAt)}
                       onChange={(e) =>
-                        updateTask(currentProject.id, { deadlineAt: parseDeadline(e.target.value) })
+                        updateProject(currentProject.id, { deadlineAt: parseDeadline(e.target.value) })
                       }
                     />
                   </div>
+                  <button
+                    className="rounded-md bg-red-900 px-3 py-2 text-sm text-red-100 hover:bg-red-800"
+                    onClick={() => {
+                      if (!confirm("Удалить проект и все его задачи?")) return;
+                      deleteProject(currentProject.id);
+                    }}
+                  >
+                    Удалить проект
+                  </button>
                 </div>
               </div>
               <div className="mt-3">
@@ -426,7 +496,7 @@ export default function ProjectsPage() {
                   className="mt-1 w-full rounded-md border border-slate-800 bg-slate-900 px-3 py-2 text-sm text-slate-100"
                   rows={3}
                   value={currentProject.notes}
-                  onChange={(e) => updateTask(currentProject.id, { notes: e.target.value })}
+                  onChange={(e) => updateProject(currentProject.id, { notes: e.target.value })}
                 />
               </div>
             </div>
@@ -436,7 +506,7 @@ export default function ProjectsPage() {
                 <div className="text-sm font-semibold text-slate-100">Задачи проекта</div>
                 <button
                   className="rounded-md bg-emerald-800 px-3 py-2 text-sm text-emerald-50 hover:bg-emerald-700"
-                  onClick={() => createTask("Новая задача", { projectId: currentProject.id })}
+                  onClick={() => createTask("", { projectId: currentProject.id })}
                 >
                   Добавить задачу
                 </button>
